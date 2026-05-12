@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var explorationManager: ExplorationManager
-    @Environment(\.scenePhase) var scenePhase
     @State private var zoomDelta = 0
     @State private var showSettings = false
 
@@ -33,14 +32,6 @@ struct ContentView: View {
                 } else {
                     statsBar
                 }
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            switch phase {
-            case .background, .inactive:
-                explorationManager.saveIfNeeded()
-            default:
-                break
             }
         }
     }

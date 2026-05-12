@@ -2,6 +2,7 @@ import Foundation
 import CoreLocation
 import Combine
 import MapKit
+import WidgetKit
 
 final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published private(set) var visitedTiles: Set<TileCoord> = []
@@ -9,8 +10,9 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     @Published private(set) var authorizationDenied = false
     @Published var backgroundTrackingEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(backgroundTrackingEnabled, forKey: "backgroundTrackingEnabled")
+            SharedSettings.backgroundTrackingEnabled = backgroundTrackingEnabled
             applyTrackingMode()
+            WidgetCenter.shared.reloadAllTimelines()
         }
     }
     @Published var trackingSettings: TrackingSettings {
@@ -23,31 +25,33 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     var totalTiles: Int { visitedTiles.count }
 
     var exploredAreaKm2: Double {
-        let avgTileAreaM2 = 111.0 * 91.0
-        return Double(visitedTiles.count) * avgTileAreaM2 / 1_000_000
+        SharedTileStore.areaKm2(tileCount: visitedTiles.count)
     }
 
     var exploredAreaFormatted: String {
-        let area = exploredAreaKm2
-        if area < 1 {
-            return String(format: "%.0f m²", area * 1_000_000)
-        }
-        return String(format: "%.2f km²", area)
+        SharedTileStore.areaFormatted(tileCount: visitedTiles.count)
     }
 
     private let clManager = CLLocationManager()
     private var saveTask: DispatchWorkItem?
     private var isInForeground = true
+    // 保存はこのシリアルキューに乗せて、並行書き込みによる古いスナップショット上書きを防ぐ。
+    private let persistenceQueue = DispatchQueue(label: "com.twogate.FogOfWorld.persistence")
 
     override init() {
-        self.backgroundTrackingEnabled = UserDefaults.standard.bool(forKey: "backgroundTrackingEnabled")
+        SharedSettings.migrateStandardDefaultsIfNeeded()
+        self.backgroundTrackingEnabled = SharedSettings.backgroundTrackingEnabled
         self.trackingSettings = TrackingSettings.load()
         super.init()
         clManager.delegate = self
         clManager.desiredAccuracy = trackingSettings.accuracy.clAccuracy
         clManager.distanceFilter = trackingSettings.foregroundDistance
         clManager.pausesLocationUpdatesAutomatically = false
+        SharedTileStore.migrateFromDocumentsIfNeeded()
         loadTiles()
+        // マイグレーション/読み込み完了直後にWidget Timelineを更新。
+        // これがないと、初回起動より前にWidgetがリフレッシュした場合に最大1時間古いキャッシュを表示しうる。
+        WidgetCenter.shared.reloadAllTimelines()
 
         NotificationCenter.default.addObserver(
             self,
@@ -101,11 +105,17 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         } else {
             clManager.stopUpdatingLocation()
         }
-        saveIfNeeded()
+        // バックグラウンド遷移直前は同期で書き出さないとiOSがアプリをsuspendして書き込みが中断する。
+        saveSynchronously()
     }
 
     @objc private func appWillEnterForeground() {
         isInForeground = true
+        // ウィジェットから backgroundTrackingEnabled が変更されている可能性があるので再読込。
+        let storedTracking = SharedSettings.backgroundTrackingEnabled
+        if storedTracking != backgroundTrackingEnabled {
+            backgroundTrackingEnabled = storedTracking
+        }
         clManager.desiredAccuracy = trackingSettings.accuracy.clAccuracy
         clManager.distanceFilter = trackingSettings.foregroundDistance
         clManager.startUpdatingLocation()
@@ -156,11 +166,6 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
 
     // MARK: - Persistence
 
-    private func fileURL() -> URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("visited_tiles.json")
-    }
-
     private func scheduleSave() {
         saveTask?.cancel()
         let task = DispatchWorkItem { [weak self] in
@@ -171,21 +176,26 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     }
 
     func saveTiles() {
-        let tiles = Array(visitedTiles)
-        DispatchQueue.global(qos: .utility).async { [fileURL = fileURL()] in
-            guard let data = try? JSONEncoder().encode(tiles) else { return }
-            try? data.write(to: fileURL, options: .atomic)
+        let tiles = visitedTiles
+        persistenceQueue.async {
+            SharedTileStore.save(tiles)
+            WidgetCenter.shared.reloadAllTimelines()
         }
     }
 
-    private func loadTiles() {
-        guard let data = try? Data(contentsOf: fileURL()),
-              let tiles = try? JSONDecoder().decode([TileCoord].self, from: data) else { return }
-        visitedTiles = Set(tiles)
+    // バックグラウンド遷移時に呼ぶ同期保存。iOSのsuspend猶予内に確実に書き出すために使う。
+    func saveSynchronously() {
+        saveTask?.cancel()
+        let tiles = visitedTiles
+        persistenceQueue.sync {
+            SharedTileStore.save(tiles)
+        }
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
-    func saveIfNeeded() {
-        saveTask?.cancel()
-        saveTiles()
+    private func loadTiles() {
+        visitedTiles = SharedTileStore.load()
+        // タイル件数をWidget用にキャッシュしておく（Widget側でJSON全件デコードを避けるため）。
+        SharedSettings.cachedTileCount = visitedTiles.count
     }
 }
