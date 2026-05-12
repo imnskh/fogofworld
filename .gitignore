@@ -1,0 +1,32 @@
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+*.xcscmblueprint
+*.xccheckout
+
+# Build
+build/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Deploy
+ExportOptions.plist
+
+# CocoaPods
+Pods/
+
+# Swift Package Manager
+.build/
+Package.resolved
+
+# OS
+.DS_Store
+*.swp
+*~
+
+# Secrets
+*.xcconfig
+!**/Base.xcconfig
