@@ -21,7 +21,7 @@ struct TrackingSettings: Codable {
     }
 
     static let foregroundOptions: [Double] = [5, 10, 20, 30, 50, 100]
-    static let backgroundOptions: [Double] = [30, 50, 100, 200, 500]
+    static let backgroundOptions: [Double] = [5, 10, 20, 30, 50, 100]
 
     static func load() -> TrackingSettings {
         guard let data = UserDefaults.standard.data(forKey: "trackingSettings"),
