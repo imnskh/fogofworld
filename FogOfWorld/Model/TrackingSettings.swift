@@ -2,14 +2,23 @@ import Foundation
 import CoreLocation
 
 struct TrackingSettings: Codable {
-    var foregroundDistance: Double = 10
-    var backgroundDistance: Double = 50
     var accuracy: AccuracyLevel = .high
 
     enum AccuracyLevel: String, Codable, CaseIterable {
-        case best = "最高"
-        case high = "高"
-        case standard = "標準"
+        case best = "高"
+        case high = "中"
+        case standard = "低"
+
+        var descriptionText: String {
+            switch self {
+            case .best:
+                return "推定 約200km/hまで隙間なく記録可能。60km/h以上で自動補間あり。バッテリー消費多め"
+            case .high:
+                return "推定 約80km/hまで隙間なく記録可能。60km/h以上で自動補間あり。バッテリー消費ふつう"
+            case .standard:
+                return "推定 約20km/hまで隙間なく記録可能。自動補間なし。バッテリー消費少ない"
+            }
+        }
 
         var clAccuracy: CLLocationAccuracy {
             switch self {
@@ -19,9 +28,6 @@ struct TrackingSettings: Codable {
             }
         }
     }
-
-    static let foregroundOptions: [Double] = [5, 10, 20, 30, 50, 100]
-    static let backgroundOptions: [Double] = [5, 10, 20, 30, 50, 100]
 
     static func load() -> TrackingSettings {
         guard let data = UserDefaults.standard.data(forKey: "trackingSettings"),

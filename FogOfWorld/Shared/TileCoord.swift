@@ -49,6 +49,29 @@ struct TileCoord: Hashable, Codable {
         )
     }
 
+    static func interpolatedTiles(from a: CLLocationCoordinate2D, to b: CLLocationCoordinate2D) -> [TileCoord] {
+        let tileA = TileCoord(from: a)
+        let tileB = TileCoord(from: b)
+        if tileA == tileB { return [] }
+
+        let dx = abs(tileB.x - tileA.x)
+        let dy = abs(tileB.y - tileA.y)
+        let steps = max(dx, dy)
+        guard steps > 0 else { return [] }
+
+        var tiles: [TileCoord] = []
+        for i in 1..<steps {
+            let t = Double(i) / Double(steps)
+            let lat = a.latitude + (b.latitude - a.latitude) * t
+            let lon = a.longitude + (b.longitude - a.longitude) * t
+            let tile = TileCoord(from: CLLocationCoordinate2D(latitude: lat, longitude: lon))
+            if tile != tileA && tile != tileB {
+                tiles.append(tile)
+            }
+        }
+        return tiles
+    }
+
     static func tileRange(for mapRect: MKMapRect) -> (xRange: ClosedRange<Int>, yRange: ClosedRange<Int>) {
         let region = MKCoordinateRegion(mapRect)
         let halfLat = region.span.latitudeDelta / 2

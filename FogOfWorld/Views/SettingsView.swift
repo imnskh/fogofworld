@@ -14,55 +14,21 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("前面の追跡") {
-                    Picker("更新距離", selection: $explorationManager.trackingSettings.foregroundDistance) {
-                        ForEach(TrackingSettings.foregroundOptions, id: \.self) { dist in
-                            Text("\(Int(dist))m").tag(dist)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    Text("移動するたびに記録する最小距離")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
                 Section("バックグラウンドの追跡") {
                     Toggle("バックグラウンド追跡", isOn: $explorationManager.backgroundTrackingEnabled)
-
-                    Picker("更新距離", selection: $explorationManager.trackingSettings.backgroundDistance) {
-                        ForEach(TrackingSettings.backgroundOptions, id: \.self) { dist in
-                            Text("\(Int(dist))m").tag(dist)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    Text("小さい値 = 精密だがバッテリー消費多い")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
-                Section("精度") {
-                    Picker("GPS精度", selection: $explorationManager.trackingSettings.accuracy) {
+                Section("更新頻度") {
+                    Picker("更新頻度", selection: $explorationManager.trackingSettings.accuracy) {
                         ForEach(TrackingSettings.AccuracyLevel.allCases, id: \.self) { level in
                             Text(level.rawValue).tag(level)
                         }
                     }
                     .pickerStyle(.segmented)
-                }
 
-                Section("データ") {
-                    Button {
-                        showingExporter = true
-                    } label: {
-                        Label("データをエクスポート", systemImage: "square.and.arrow.up")
-                    }
-
-                    Button {
-                        showingImporter = true
-                    } label: {
-                        Label("データをインポート", systemImage: "square.and.arrow.down")
-                    }
+                    Text(explorationManager.trackingSettings.accuracy.descriptionText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -77,6 +43,20 @@ struct SettingsView: View {
                         Spacer()
                         Text(explorationManager.exploredAreaFormatted)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("データ") {
+                    Button {
+                        showingExporter = true
+                    } label: {
+                        Label("データをエクスポート", systemImage: "square.and.arrow.up")
+                    }
+
+                    Button {
+                        showingImporter = true
+                    } label: {
+                        Label("データをインポート", systemImage: "square.and.arrow.down")
                     }
                 }
             }

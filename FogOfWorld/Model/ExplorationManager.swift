@@ -36,6 +36,8 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     private let clManager = CLLocationManager()
     private var saveTask: DispatchWorkItem?
     private var isInForeground = true
+    private var lastLocation: CLLocation?
+    private let interpolationSpeedThreshold: CLLocationSpeed = 60.0 / 3.6 // 60 km/h in m/s
     // 保存はこのシリアルキューに乗せて、並行書き込みによる古いスナップショット上書きを防ぐ。
     private let persistenceQueue = DispatchQueue(label: "com.twogate.fogworld.persistence")
 
@@ -46,7 +48,7 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         super.init()
         clManager.delegate = self
         clManager.desiredAccuracy = trackingSettings.accuracy.clAccuracy
-        clManager.distanceFilter = trackingSettings.foregroundDistance
+        clManager.distanceFilter = kCLDistanceFilterNone
         clManager.pausesLocationUpdatesAutomatically = false
         SharedTileStore.migrateFromDocumentsIfNeeded()
         loadTiles()
@@ -102,7 +104,6 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         isInForeground = false
         if backgroundTrackingEnabled {
             clManager.desiredAccuracy = trackingSettings.accuracy.clAccuracy
-            clManager.distanceFilter = trackingSettings.backgroundDistance
         } else {
             clManager.stopUpdatingLocation()
         }
@@ -118,7 +119,6 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
             backgroundTrackingEnabled = storedTracking
         }
         clManager.desiredAccuracy = trackingSettings.accuracy.clAccuracy
-        clManager.distanceFilter = trackingSettings.foregroundDistance
         clManager.startUpdatingLocation()
     }
 
@@ -150,10 +150,23 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
             guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 100 else { continue }
             currentLocation = location.coordinate
             recordedPoints.append(RecordedPoint(coordinate: location.coordinate, timestamp: location.timestamp))
+
+            if let prev = lastLocation,
+               location.speed >= interpolationSpeedThreshold,
+               trackingSettings.accuracy != .standard {
+                let interpolated = TileCoord.interpolatedTiles(from: prev.coordinate, to: location.coordinate)
+                for tile in interpolated {
+                    if visitedTiles.insert(tile).inserted {
+                        didChange = true
+                    }
+                }
+            }
+
             let tile = TileCoord(from: location.coordinate)
             if visitedTiles.insert(tile).inserted {
                 didChange = true
             }
+            lastLocation = location
         }
         if didChange || !locations.isEmpty {
             scheduleSave()
