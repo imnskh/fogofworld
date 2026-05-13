@@ -17,7 +17,6 @@ struct ContentView: View {
                     Spacer()
                     VStack(spacing: 12) {
                         settingsButton
-                        backgroundToggle
                         zoomButtons
                     }
                 }
@@ -72,20 +71,6 @@ struct ContentView: View {
             SettingsView()
                 .environmentObject(explorationManager)
         }
-    }
-
-    private var backgroundToggle: some View {
-        Button {
-            explorationManager.backgroundTrackingEnabled.toggle()
-        } label: {
-            Image(systemName: explorationManager.backgroundTrackingEnabled
-                  ? "location.fill" : "location.slash")
-                .frame(width: 44, height: 44)
-                .foregroundStyle(explorationManager.backgroundTrackingEnabled
-                                 ? .blue : .secondary)
-        }
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private var zoomButtons: some View {
