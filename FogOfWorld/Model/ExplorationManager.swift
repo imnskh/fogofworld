@@ -36,7 +36,7 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     private var saveTask: DispatchWorkItem?
     private var isInForeground = true
     // 保存はこのシリアルキューに乗せて、並行書き込みによる古いスナップショット上書きを防ぐ。
-    private let persistenceQueue = DispatchQueue(label: "com.twogate.FogOfWorld.persistence")
+    private let persistenceQueue = DispatchQueue(label: "com.twogate.fogworld.persistence")
 
     override init() {
         SharedSettings.migrateStandardDefaultsIfNeeded()

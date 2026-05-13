@@ -49,7 +49,7 @@ targets:
       - FogOfWorld/Shared
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.twogate.FogOfWorld.Widget
+        PRODUCT_BUNDLE_IDENTIFIER: com.twogate.fogworld.Widget
         PRODUCT_NAME: FogOfWorldWidget
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"

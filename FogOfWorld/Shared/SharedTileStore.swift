@@ -2,7 +2,7 @@ import Foundation
 import os.log
 
 enum SharedTileStore {
-    static let appGroupID = "group.com.twogate.FogOfWorld"
+    static let appGroupID = "group.com.twogate.fogworld"
     private static let fileName = "visited_tiles.json"
     private static let logger = Logger(subsystem: appGroupID, category: "SharedTileStore")
 

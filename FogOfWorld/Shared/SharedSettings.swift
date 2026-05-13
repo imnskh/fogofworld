@@ -1,7 +1,7 @@
 import Foundation
 
 enum SharedSettings {
-    static let appGroupID = "group.com.twogate.FogOfWorld"
+    static let appGroupID = "group.com.twogate.fogworld"
     private static let backgroundTrackingKey = "backgroundTrackingEnabled"
     private static let cachedTileCountKey = "cachedTileCount"
 
