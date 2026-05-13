@@ -4,6 +4,7 @@ import os.log
 enum SharedTileStore {
     static let appGroupID = "group.com.twogate.fogworld"
     private static let fileName = "visited_tiles.json"
+    private static let pointsFileName = "recorded_points.json"
     private static let logger = Logger(subsystem: appGroupID, category: "SharedTileStore")
 
     static var containerURL: URL? {
@@ -60,6 +61,34 @@ enum SharedTileStore {
         // 移行後、件数キャッシュも更新しておく（初回起動でWidgetが0件のままになるのを防ぐ）。
         if let tiles = try? JSONDecoder().decode([TileCoord].self, from: data) {
             SharedSettings.cachedTileCount = tiles.count
+        }
+    }
+
+    // MARK: - Recorded Points
+
+    static var pointsFileURL: URL? {
+        containerURL?.appendingPathComponent(pointsFileName)
+    }
+
+    static func loadPoints() -> [RecordedPoint] {
+        guard let url = pointsFileURL else { return [] }
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode([RecordedPoint].self, from: data)
+        } catch {
+            logger.error("Failed to decode recorded points: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
+    }
+
+    static func savePoints(_ points: [RecordedPoint]) {
+        guard let url = pointsFileURL else { return }
+        do {
+            let data = try JSONEncoder().encode(points)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            logger.error("Failed to save recorded points: \(error.localizedDescription, privacy: .public)")
         }
     }
 

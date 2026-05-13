@@ -28,6 +28,8 @@ struct SettingsView: View {
                 }
 
                 Section("バックグラウンドの追跡") {
+                    Toggle("バックグラウンド追跡", isOn: $explorationManager.backgroundTrackingEnabled)
+
                     Picker("更新距離", selection: $explorationManager.trackingSettings.backgroundDistance) {
                         ForEach(TrackingSettings.backgroundOptions, id: \.self) { dist in
                             Text("\(Int(dist))m").tag(dist)

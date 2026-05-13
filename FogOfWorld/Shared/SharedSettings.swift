@@ -24,12 +24,15 @@ enum SharedSettings {
     // 旧バージョンが UserDefaults.standard に保存していた設定値をApp Groupへ移行する。
     // App Group側に値が無く、Standard側にだけある場合のみコピー。
     static func migrateStandardDefaultsIfNeeded() {
-        if defaults.object(forKey: backgroundTrackingKey) == nil,
-           UserDefaults.standard.object(forKey: backgroundTrackingKey) != nil {
-            defaults.set(
-                UserDefaults.standard.bool(forKey: backgroundTrackingKey),
-                forKey: backgroundTrackingKey
-            )
+        if defaults.object(forKey: backgroundTrackingKey) == nil {
+            if UserDefaults.standard.object(forKey: backgroundTrackingKey) != nil {
+                defaults.set(
+                    UserDefaults.standard.bool(forKey: backgroundTrackingKey),
+                    forKey: backgroundTrackingKey
+                )
+            } else {
+                defaults.set(true, forKey: backgroundTrackingKey)
+            }
         }
     }
 }

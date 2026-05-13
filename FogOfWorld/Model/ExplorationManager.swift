@@ -6,6 +6,7 @@ import WidgetKit
 
 final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published private(set) var visitedTiles: Set<TileCoord> = []
+    @Published private(set) var recordedPoints: [RecordedPoint] = []
     @Published private(set) var currentLocation: CLLocationCoordinate2D?
     @Published private(set) var authorizationDenied = false
     @Published var backgroundTrackingEnabled: Bool {
@@ -144,13 +145,18 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        var didChange = false
         for location in locations {
             guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 100 else { continue }
             currentLocation = location.coordinate
+            recordedPoints.append(RecordedPoint(coordinate: location.coordinate, timestamp: location.timestamp))
             let tile = TileCoord(from: location.coordinate)
             if visitedTiles.insert(tile).inserted {
-                scheduleSave()
+                didChange = true
             }
+        }
+        if didChange || !locations.isEmpty {
+            scheduleSave()
         }
     }
 
@@ -177,25 +183,28 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
 
     func saveTiles() {
         let tiles = visitedTiles
+        let points = recordedPoints
         persistenceQueue.async {
             SharedTileStore.save(tiles)
+            SharedTileStore.savePoints(points)
             WidgetCenter.shared.reloadAllTimelines()
         }
     }
 
-    // バックグラウンド遷移時に呼ぶ同期保存。iOSのsuspend猶予内に確実に書き出すために使う。
     func saveSynchronously() {
         saveTask?.cancel()
         let tiles = visitedTiles
+        let points = recordedPoints
         persistenceQueue.sync {
             SharedTileStore.save(tiles)
+            SharedTileStore.savePoints(points)
         }
         WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func loadTiles() {
         visitedTiles = SharedTileStore.load()
-        // タイル件数をWidget用にキャッシュしておく（Widget側でJSON全件デコードを避けるため）。
+        recordedPoints = SharedTileStore.loadPoints()
         SharedSettings.cachedTileCount = visitedTiles.count
     }
 

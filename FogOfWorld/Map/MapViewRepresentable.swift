@@ -54,7 +54,6 @@ struct MapViewRepresentable: UIViewRepresentable {
     final class Coordinator: NSObject, MKMapViewDelegate {
         let explorationManager: ExplorationManager
         var fogRenderer: FogOverlayRenderer?
-        var cancellable: AnyCancellable?
         var hasCenteredOnUser = false
         var lastZoomDelta = 0
         var previousZoomValue = 0
@@ -63,12 +62,32 @@ struct MapViewRepresentable: UIViewRepresentable {
             self.explorationManager = explorationManager
         }
 
+        var tilesCancellable: AnyCancellable?
+        var pointsCancellable: AnyCancellable?
+        weak var trackPolyline: MKPolyline?
+
         func setupSubscription(mapView: MKMapView) {
-            cancellable = explorationManager.$visitedTiles
+            tilesCancellable = explorationManager.$visitedTiles
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] tiles in
                     self?.fogRenderer?.updateTiles(tiles)
                 }
+            pointsCancellable = explorationManager.$recordedPoints
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] points in
+                    self?.updateTrack(points: points, on: mapView)
+                }
+        }
+
+        func updateTrack(points: [RecordedPoint], on mapView: MKMapView) {
+            if let old = trackPolyline {
+                mapView.removeOverlay(old)
+            }
+            guard points.count >= 2 else { return }
+            var coords = points.map { $0.coordinate }
+            let polyline = MKPolyline(coordinates: &coords, count: coords.count)
+            mapView.addOverlay(polyline, level: .aboveRoads)
+            trackPolyline = polyline
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
@@ -76,6 +95,12 @@ struct MapViewRepresentable: UIViewRepresentable {
                 let renderer = FogOverlayRenderer(overlay: overlay)
                 renderer.updateTiles(explorationManager.visitedTiles)
                 fogRenderer = renderer
+                return renderer
+            }
+            if let polyline = overlay as? MKPolyline {
+                let renderer = MKPolylineRenderer(polyline: polyline)
+                renderer.strokeColor = UIColor.systemBlue.withAlphaComponent(0.7)
+                renderer.lineWidth = 3
                 return renderer
             }
             return MKOverlayRenderer(overlay: overlay)
