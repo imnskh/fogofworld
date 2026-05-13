@@ -198,4 +198,40 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         // タイル件数をWidget用にキャッシュしておく（Widget側でJSON全件デコードを避けるため）。
         SharedSettings.cachedTileCount = visitedTiles.count
     }
+
+    // MARK: - Import / Export
+
+    func exportDocument() -> ExplorationDocument {
+        ExplorationDocument(tiles: visitedTiles)
+    }
+
+    enum ImportMode {
+        case merge
+        case replace
+    }
+
+    func importTiles(from url: URL, mode: ImportMode) throws -> Int {
+        guard url.startAccessingSecurityScopedResource() else {
+            throw CocoaError(.fileReadNoPermission)
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
+
+        let data = try Data(contentsOf: url)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let imported = try decoder.decode(ExplorationData.self, from: data)
+
+        let newTiles = Set(imported.tiles)
+        let previousCount = visitedTiles.count
+
+        switch mode {
+        case .merge:
+            visitedTiles.formUnion(newTiles)
+        case .replace:
+            visitedTiles = newTiles
+        }
+
+        saveTiles()
+        return visitedTiles.count - previousCount
+    }
 }
