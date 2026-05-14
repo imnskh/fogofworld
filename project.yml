@@ -18,7 +18,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.twogate.fogworld
         MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: "2"
+        CURRENT_PROJECT_VERSION: "3"
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -38,6 +38,7 @@ targets:
           - UIInterfaceOrientationPortrait
         NSLocationWhenInUseUsageDescription: "訪れた場所の霧を晴らすために位置情報を使用します"
         NSLocationAlwaysAndWhenInUseUsageDescription: "バックグラウンドでも位置情報を記録し、訪れた場所の霧を晴らします"
+        NSMotionUsageDescription: "移動手段を判定し、乗り物での移動中にタイルを補完します"
         UIBackgroundModes:
           - location
 
@@ -52,7 +53,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.twogate.fogworld.Widget
         PRODUCT_NAME: FogOfWorldWidget
         MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: "2"
+        CURRENT_PROJECT_VERSION: "3"
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1"
         DEVELOPMENT_TEAM: "245VA3YW54"

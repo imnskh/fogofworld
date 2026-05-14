@@ -24,6 +24,8 @@
 	<string>バックグラウンドでも位置情報を記録し、訪れた場所の霧を晴らします</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>訪れた場所の霧を晴らすために位置情報を使用します</string>
+	<key>NSMotionUsageDescription</key>
+	<string>移動手段を判定し、乗り物での移動中にタイルを補完します</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

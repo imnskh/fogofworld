@@ -58,9 +58,13 @@ struct MapViewRepresentable: UIViewRepresentable {
             context.coordinator.trackRenderer?.visible = showTrack
             context.coordinator.trackRenderer?.setNeedsDisplay()
         }
-        // ExplorationManager は @ObservedObject なので fogEffectsEnabled が変わると updateUIView が走る。
-        // renderer 側の setter が値変化時のみ setNeedsDisplay() を発火するため、毎フレーム代入しても無駄ヒットはしない。
         context.coordinator.fogRenderer?.effectsEnabled = explorationManager.fogEffectsEnabled
+        let interval = explorationManager.trackingSettings.trackDisplayHours.timeInterval
+        if interval != context.coordinator.lastDisplayInterval {
+            context.coordinator.lastDisplayInterval = interval
+            context.coordinator.trackRenderer?.displayTimeInterval = interval
+            context.coordinator.trackRenderer?.setNeedsDisplay()
+        }
     }
 
     final class Coordinator: NSObject, MKMapViewDelegate {
@@ -72,6 +76,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         var previousZoomValue = 0
         var lastPointCount = 0
         var trackVisible = true
+        var lastDisplayInterval: TimeInterval?
 
         init(explorationManager: ExplorationManager) {
             self.explorationManager = explorationManager

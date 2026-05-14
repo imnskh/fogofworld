@@ -27,6 +27,19 @@ struct SettingsView: View {
                     Text("マップ表示")
                 }
 
+                Section("軌跡の表示") {
+                    Picker("表示期間", selection: $explorationManager.trackingSettings.trackDisplayHours) {
+                        ForEach(TrackingSettings.TrackDisplayHours.allCases, id: \.self) { hours in
+                            Text(hours.label).tag(hours)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text("古い軌跡を非表示にして描画を軽くする。データは保持される")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("更新頻度") {
                     Picker("更新頻度", selection: $explorationManager.trackingSettings.accuracy) {
                         ForEach(TrackingSettings.AccuracyLevel.allCases, id: \.self) { level in

@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import CoreMotion
 import Combine
 import MapKit
 import WidgetKit
@@ -39,11 +40,12 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     }
 
     private let clManager = CLLocationManager()
+    private let activityManager = CMMotionActivityManager()
     private var saveTask: DispatchWorkItem?
     private var isInForeground = true
     private var lastLocation: CLLocation?
+    private var isAutomotive = false
     private let interpolationSpeedThreshold: CLLocationSpeed = 60.0 / 3.6 // 60 km/h in m/s
-    // 保存はこのシリアルキューに乗せて、並行書き込みによる古いスナップショット上書きを防ぐ。
     private let persistenceQueue = DispatchQueue(label: "com.twogate.fogworld.persistence")
 
     override init() {
@@ -62,6 +64,8 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         // これがないと、初回起動より前にWidgetがリフレッシュした場合に最大1時間古いキャッシュを表示しうる。
         WidgetCenter.shared.reloadAllTimelines()
 
+        startActivityMonitoring()
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appDidEnterBackground),
@@ -74,6 +78,16 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
             name: UIApplication.willEnterForegroundNotification,
             object: nil
         )
+    }
+
+    // MARK: - Activity Monitoring
+
+    private func startActivityMonitoring() {
+        guard CMMotionActivityManager.isActivityAvailable() else { return }
+        activityManager.startActivityUpdates(to: .main) { [weak self] activity in
+            guard let activity else { return }
+            self?.isAutomotive = activity.automotive
+        }
     }
 
     // MARK: - Tracking Control
@@ -157,9 +171,9 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
             currentLocation = location.coordinate
             recordedPoints.append(RecordedPoint(coordinate: location.coordinate, timestamp: location.timestamp))
 
+            let speedBased = location.speed >= interpolationSpeedThreshold && trackingSettings.accuracy != .standard
             if let prev = lastLocation,
-               location.speed >= interpolationSpeedThreshold,
-               trackingSettings.accuracy != .standard {
+               speedBased || isAutomotive {
                 let interpolated = TileCoord.interpolatedTiles(from: prev.coordinate, to: location.coordinate)
                 for tile in interpolated {
                     if visitedTiles.insert(tile).inserted {
