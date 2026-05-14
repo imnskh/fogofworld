@@ -22,6 +22,9 @@ struct MapViewRepresentable: UIViewRepresentable {
         mapView.showsCompass = true
         mapView.showsScale = true
 
+        let trackOverlay = TrackOverlay()
+        mapView.addOverlay(trackOverlay, level: .aboveRoads)
+
         let fogOverlay = FogOverlay()
         mapView.addOverlay(fogOverlay, level: .aboveLabels)
 
@@ -54,9 +57,11 @@ struct MapViewRepresentable: UIViewRepresentable {
     final class Coordinator: NSObject, MKMapViewDelegate {
         let explorationManager: ExplorationManager
         var fogRenderer: FogOverlayRenderer?
+        var trackRenderer: TrackOverlayRenderer?
         var hasCenteredOnUser = false
         var lastZoomDelta = 0
         var previousZoomValue = 0
+        var lastPointCount = 0
 
         init(explorationManager: ExplorationManager) {
             self.explorationManager = explorationManager
@@ -64,7 +69,6 @@ struct MapViewRepresentable: UIViewRepresentable {
 
         var tilesCancellable: AnyCancellable?
         var pointsCancellable: AnyCancellable?
-        weak var trackPolyline: MKPolyline?
 
         func setupSubscription(mapView: MKMapView) {
             tilesCancellable = explorationManager.$visitedTiles
@@ -75,19 +79,16 @@ struct MapViewRepresentable: UIViewRepresentable {
             pointsCancellable = explorationManager.$recordedPoints
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] points in
-                    self?.updateTrack(points: points, on: mapView)
+                    guard let self else { return }
+                    if self.lastPointCount == 0 {
+                        self.trackRenderer?.updatePoints(points)
+                    } else {
+                        for point in points[self.lastPointCount...] {
+                            self.trackRenderer?.appendPoint(point)
+                        }
+                    }
+                    self.lastPointCount = points.count
                 }
-        }
-
-        func updateTrack(points: [RecordedPoint], on mapView: MKMapView) {
-            if let old = trackPolyline {
-                mapView.removeOverlay(old)
-            }
-            guard points.count >= 2 else { return }
-            var coords = points.map { $0.coordinate }
-            let polyline = MKPolyline(coordinates: &coords, count: coords.count)
-            mapView.addOverlay(polyline, level: .aboveRoads)
-            trackPolyline = polyline
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
@@ -97,10 +98,11 @@ struct MapViewRepresentable: UIViewRepresentable {
                 fogRenderer = renderer
                 return renderer
             }
-            if let polyline = overlay as? MKPolyline {
-                let renderer = MKPolylineRenderer(polyline: polyline)
-                renderer.strokeColor = UIColor.systemBlue.withAlphaComponent(0.7)
-                renderer.lineWidth = 3
+            if overlay is TrackOverlay {
+                let renderer = TrackOverlayRenderer(overlay: overlay)
+                renderer.updatePoints(explorationManager.recordedPoints)
+                lastPointCount = explorationManager.recordedPoints.count
+                trackRenderer = renderer
                 return renderer
             }
             return MKOverlayRenderer(overlay: overlay)
