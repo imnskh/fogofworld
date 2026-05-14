@@ -18,6 +18,15 @@ struct SettingsView: View {
                     Toggle("バックグラウンド追跡", isOn: $explorationManager.backgroundTrackingEnabled)
                 }
 
+                Section {
+                    Toggle("霧の演出", isOn: $explorationManager.fogEffectsEnabled)
+                    Text("境界をやわらかくぼかし、新しいタイルを発見したときに演出を表示します。オフにすると描画が軽くなります。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("マップ表示")
+                }
+
                 Section("更新頻度") {
                     Picker("更新頻度", selection: $explorationManager.trackingSettings.accuracy) {
                         ForEach(TrackingSettings.AccuracyLevel.allCases, id: \.self) { level in

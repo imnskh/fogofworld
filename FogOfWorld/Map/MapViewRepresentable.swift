@@ -58,6 +58,9 @@ struct MapViewRepresentable: UIViewRepresentable {
             context.coordinator.trackRenderer?.visible = showTrack
             context.coordinator.trackRenderer?.setNeedsDisplay()
         }
+        // ExplorationManager は @ObservedObject なので fogEffectsEnabled が変わると updateUIView が走る。
+        // renderer 側の setter が値変化時のみ setNeedsDisplay() を発火するため、毎フレーム代入しても無駄ヒットはしない。
+        context.coordinator.fogRenderer?.effectsEnabled = explorationManager.fogEffectsEnabled
     }
 
     final class Coordinator: NSObject, MKMapViewDelegate {
@@ -101,6 +104,9 @@ struct MapViewRepresentable: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if overlay is FogOverlay {
                 let renderer = FogOverlayRenderer(overlay: overlay)
+                // updateTiles 前に effectsEnabled を確定しておく。
+                // (アニメ判定ロジックが effectsEnabled を参照するため順序が重要)
+                renderer.effectsEnabled = explorationManager.fogEffectsEnabled
                 renderer.updateTiles(explorationManager.visitedTiles)
                 fogRenderer = renderer
                 return renderer

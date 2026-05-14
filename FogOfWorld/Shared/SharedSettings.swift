@@ -4,6 +4,7 @@ enum SharedSettings {
     static let appGroupID = "group.com.twogate.fogworld"
     private static let backgroundTrackingKey = "backgroundTrackingEnabled"
     private static let cachedTileCountKey = "cachedTileCount"
+    private static let fogEffectsEnabledKey = "fogEffectsEnabled"
 
     private static var defaults: UserDefaults {
         UserDefaults(suiteName: appGroupID) ?? .standard
@@ -19,6 +20,16 @@ enum SharedSettings {
     static var cachedTileCount: Int {
         get { defaults.integer(forKey: cachedTileCountKey) }
         set { defaults.set(newValue, forKey: cachedTileCountKey) }
+    }
+
+    // 霧のエフェクト (境界ソフト化 + 新タイル解禁アニメ) の一括 ON/OFF。
+    // 未設定時は true (有効) をデフォルトにする。
+    static var fogEffectsEnabled: Bool {
+        get {
+            if defaults.object(forKey: fogEffectsEnabledKey) == nil { return true }
+            return defaults.bool(forKey: fogEffectsEnabledKey)
+        }
+        set { defaults.set(newValue, forKey: fogEffectsEnabledKey) }
     }
 
     // 旧バージョンが UserDefaults.standard に保存していた設定値をApp Groupへ移行する。

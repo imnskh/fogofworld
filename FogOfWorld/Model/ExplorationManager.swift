@@ -22,6 +22,11 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
             applyTrackingMode()
         }
     }
+    @Published var fogEffectsEnabled: Bool {
+        didSet {
+            SharedSettings.fogEffectsEnabled = fogEffectsEnabled
+        }
+    }
 
     var totalTiles: Int { visitedTiles.count }
 
@@ -45,6 +50,7 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         SharedSettings.migrateStandardDefaultsIfNeeded()
         self.backgroundTrackingEnabled = SharedSettings.backgroundTrackingEnabled
         self.trackingSettings = TrackingSettings.load()
+        self.fogEffectsEnabled = SharedSettings.fogEffectsEnabled
         super.init()
         clManager.delegate = self
         clManager.desiredAccuracy = trackingSettings.accuracy.clAccuracy
@@ -256,4 +262,5 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         saveTiles()
         return visitedTiles.count - previousCount
     }
+
 }
