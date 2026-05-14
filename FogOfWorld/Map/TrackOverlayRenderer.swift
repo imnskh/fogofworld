@@ -4,7 +4,7 @@ import UIKit
 final class TrackOverlayRenderer: MKOverlayRenderer {
     private let lock = NSLock()
     let lodCache = TrackLODCache()
-    private var currentLevel: TrackLODCache.Level = .l0
+    var visible = true
 
     private let trackColor = UIColor.systemBlue.withAlphaComponent(0.7).cgColor
     private let lineWidth: CGFloat = 3
@@ -24,6 +24,8 @@ final class TrackOverlayRenderer: MKOverlayRenderer {
     }
 
     override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in context: CGContext) {
+        guard visible else { return }
+
         let region = MKCoordinateRegion(mapRect)
         let level = TrackLODCache.Level.from(latitudeDelta: region.span.latitudeDelta)
 

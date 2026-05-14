@@ -4,10 +4,11 @@ struct ContentView: View {
     @EnvironmentObject var explorationManager: ExplorationManager
     @State private var zoomDelta = 0
     @State private var showSettings = false
+    @State private var showTrack = true
 
     var body: some View {
         ZStack {
-            MapViewRepresentable(explorationManager: explorationManager, zoomDelta: zoomDelta)
+            MapViewRepresentable(explorationManager: explorationManager, zoomDelta: zoomDelta, showTrack: showTrack)
                 .ignoresSafeArea()
 
             VStack {
@@ -17,6 +18,7 @@ struct ContentView: View {
                     Spacer()
                     VStack(spacing: 12) {
                         settingsButton
+                        trackToggle
                         zoomButtons
                     }
                 }
@@ -71,6 +73,18 @@ struct ContentView: View {
             SettingsView()
                 .environmentObject(explorationManager)
         }
+    }
+
+    private var trackToggle: some View {
+        Button {
+            showTrack.toggle()
+        } label: {
+            Image(systemName: showTrack ? "point.topright.arrow.triangle.backward.to.point.bottomleft.scurvepath.fill" : "point.topright.arrow.triangle.backward.to.point.bottomleft.scurvepath")
+                .frame(width: 44, height: 44)
+                .foregroundStyle(showTrack ? .blue : .secondary)
+        }
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private var zoomButtons: some View {

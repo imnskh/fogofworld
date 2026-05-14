@@ -5,6 +5,7 @@ import Combine
 struct MapViewRepresentable: UIViewRepresentable {
     @ObservedObject var explorationManager: ExplorationManager
     var zoomDelta: Int
+    var showTrack: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(explorationManager: explorationManager)
@@ -52,6 +53,11 @@ struct MapViewRepresentable: UIViewRepresentable {
             region.span.longitudeDelta *= factor
             uiView.setRegion(region, animated: true)
         }
+        if showTrack != context.coordinator.trackVisible {
+            context.coordinator.trackVisible = showTrack
+            context.coordinator.trackRenderer?.visible = showTrack
+            context.coordinator.trackRenderer?.setNeedsDisplay()
+        }
     }
 
     final class Coordinator: NSObject, MKMapViewDelegate {
@@ -62,6 +68,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         var lastZoomDelta = 0
         var previousZoomValue = 0
         var lastPointCount = 0
+        var trackVisible = true
 
         init(explorationManager: ExplorationManager) {
             self.explorationManager = explorationManager
