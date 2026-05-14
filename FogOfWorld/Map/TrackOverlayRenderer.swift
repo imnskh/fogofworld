@@ -3,28 +3,32 @@ import UIKit
 
 final class TrackOverlayRenderer: MKOverlayRenderer {
     private let lock = NSLock()
-    private var _points: [RecordedPoint] = []
+    let lodCache = TrackLODCache()
+    private var currentLevel: TrackLODCache.Level = .l0
 
     private let trackColor = UIColor.systemBlue.withAlphaComponent(0.7).cgColor
     private let lineWidth: CGFloat = 3
 
     func updatePoints(_ points: [RecordedPoint]) {
         lock.lock()
-        _points = points
+        lodCache.setAll(points)
         lock.unlock()
         setNeedsDisplay()
     }
 
     func appendPoint(_ point: RecordedPoint) {
         lock.lock()
-        _points.append(point)
+        lodCache.appendPoint(point)
         lock.unlock()
         setNeedsDisplay()
     }
 
     override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in context: CGContext) {
+        let region = MKCoordinateRegion(mapRect)
+        let level = TrackLODCache.Level.from(latitudeDelta: region.span.latitudeDelta)
+
         lock.lock()
-        let points = _points
+        let points = lodCache.points(for: level)
         lock.unlock()
 
         guard points.count >= 2 else { return }
