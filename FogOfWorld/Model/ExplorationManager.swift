@@ -179,8 +179,16 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
             ))
 
             let speedBased = location.speed >= interpolationSpeedThreshold && trackingSettings.accuracy != .standard
+            let inferredHighSpeed: Bool
+            if let prev = lastLocation {
+                let dist = location.distance(from: prev)
+                let dt = location.timestamp.timeIntervalSince(prev.timestamp)
+                inferredHighSpeed = dt > 0 && dist / dt >= interpolationSpeedThreshold && dist <= 2000
+            } else {
+                inferredHighSpeed = false
+            }
             if let prev = lastLocation,
-               speedBased || isAutomotive {
+               speedBased || isAutomotive || inferredHighSpeed {
                 let interpolated = TileCoord.interpolatedTiles(from: prev.coordinate, to: location.coordinate)
                 for tile in interpolated {
                     if visitedTiles.insert(tile).inserted {
