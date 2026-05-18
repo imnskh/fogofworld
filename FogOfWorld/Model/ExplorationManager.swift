@@ -169,7 +169,14 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         for location in locations {
             guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 100 else { continue }
             currentLocation = location.coordinate
-            recordedPoints.append(RecordedPoint(coordinate: location.coordinate, timestamp: location.timestamp))
+            recordedPoints.append(RecordedPoint(
+                coordinate: location.coordinate,
+                timestamp: location.timestamp,
+                speed: location.speed,
+                horizontalAccuracy: location.horizontalAccuracy,
+                course: location.course,
+                isAutomotive: isAutomotive
+            ))
 
             let speedBased = location.speed >= interpolationSpeedThreshold && trackingSettings.accuracy != .standard
             if let prev = lastLocation,
