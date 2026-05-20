@@ -67,6 +67,7 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     private enum TrackingState { case moving, backgroundStationary }
     private var trackingState: TrackingState = .moving
     private var stationaryCheckStart: Date?
+    private var stationaryTimer: Timer?
     private var isMotionStationary = false
     private var awaitingFullAccuracyFix = false
     private let stationaryRegionId = "com.twogate.fogworld.stationary"
@@ -338,6 +339,10 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
 
         if stationaryCheckStart == nil {
             stationaryCheckStart = Date()
+            stationaryTimer?.invalidate()
+            stationaryTimer = Timer.scheduledTimer(withTimeInterval: stationaryConfirmationInterval, repeats: false) { [weak self] _ in
+                self?.completeStationaryTransitionIfValid()
+            }
         }
 
         guard let start = stationaryCheckStart,
@@ -388,8 +393,19 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         resetStationaryCheck()
     }
 
+    private func completeStationaryTransitionIfValid() {
+        guard trackingState == .moving, backgroundTrackingEnabled, isMotionStationary else {
+            resetStationaryCheck()
+            return
+        }
+        guard let location = lastLocation else { return }
+        transitionToBackgroundStationary(at: location)
+    }
+
     private func resetStationaryCheck() {
         stationaryCheckStart = nil
+        stationaryTimer?.invalidate()
+        stationaryTimer = nil
     }
 
     // MARK: - Persistence

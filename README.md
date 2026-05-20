@@ -132,11 +132,13 @@ FogOfWorld/
 | 条件 | 閾値 | 判定方法 |
 |---|---|---|
 | CMMotionActivity | `stationary` かつ `confidence != .low` | `isMotionStationary` フラグ |
-| GPS速度 | `speed >= 0` かつ `< 1.0 m/s` | `CLLocation.speed` |
-| 変位 | 始点→現在点の直線距離 < 30m | `horizontalAccuracy < 20m` のfixのみで計測 |
+| GPS速度 | 有効値（`speed >= 0`）の場合 `< 1.0 m/s` | `CLLocation.speed`。`speed = -1`（測定不能）は無視する（リセットもしない） |
+| 変位 | 前回fix→現在fixの距離 < 30m | `location.distance(from: previousLocation)` |
 | 経過時間 | 確認ウィンドウ開始から >= 120秒 | `stationaryCheckStart` からの経過 |
 
-条件が1つでも崩れた場合（speed上昇・motion非stationary・変位超過）、確認ウィンドウは即座にリセットされる。`horizontalAccuracy >= 20m` のfixは変位計測に使わないが、ウィンドウはリセットしない（精度が悪いだけで動いたとは限らない）。
+条件が1つでも崩れた場合（speed上昇・motion非stationary・変位超過）、確認ウィンドウは即座にリセットされる。
+
+**タイマーによる確定補完**: 静止時は `distanceFilter` により新しい位置更新が届かなくなる。位置更新だけに依存すると120秒経過の判定が再評価されないため、確認ウィンドウ開始時に120秒後のタイマーを予約する。タイマー発火時に条件が維持されていれば `transitionToBackgroundStationary` を実行する。
 
 **停止確定時の処理 (`transitionToBackgroundStationary`)**
 
@@ -191,11 +193,15 @@ CMMotionActivity は**補助シグナル**であり、これ単独でGPSを停�
 3. `saveSynchronously()` — iOSがsuspendする前にデータを確実に書き出す
 
 **フォアグラウンド復帰時 (`appWillEnterForeground`)**
-1. `pausesLocationUpdatesAutomatically = false`
-2. `backgroundStationary` なら `resumeFromStationary()`
-3. 静止確認ウィンドウをリセット
+1. `pausesLocationUpdatesAutomatically` を `isEffectivelyInForeground` に応じて設定
+2. `backgroundStationary` かつ `isEffectivelyInForeground` なら `resumeFromStationary()`
+3. `isEffectivelyInForeground` なら静止確認ウィンドウをリセット
 4. ウィジェット経由の設定変更を反映
 5. `desiredAccuracy` を復元し `startUpdatingLocation()`
+
+**デバッグ: バックグラウンド模擬 (`debugSimulateBackground`)**
+
+`isEffectivelyInForeground = isInForeground && !debugSimulateBackground` により、フォアグラウンドでもバックグラウンド相当の動作（静止判定・accuracy切替・pauses有効化）をテストできる。
 
 ### 保存 (`scheduleSave`)
 
@@ -215,7 +221,6 @@ CMMotionActivity は**補助シグナル**であり、これ単独でGPSを停�
 | `stationaryGeofenceRadius` | 100m | `ExplorationManager` |
 | awaitingFullAccuracyFix 解除閾値 | `horizontalAccuracy < 20m` | `didUpdateLocations` |
 | 位置フィルタ | `horizontalAccuracy < 100m` | `didUpdateLocations` |
-| 変位計測用精度フィルタ | `horizontalAccuracy < 20m` | `evaluateStationaryConditions` |
 | 保存デバウンス | 3秒 | `scheduleSave` |
 
 ## License
