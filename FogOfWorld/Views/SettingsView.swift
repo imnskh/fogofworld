@@ -68,6 +68,15 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("デバッグ") {
+                    NavigationLink {
+                        DebugPointsView()
+                            .environmentObject(explorationManager)
+                    } label: {
+                        Label("記録ポイント（\(explorationManager.recordedPoints.count)件）", systemImage: "list.bullet.rectangle")
+                    }
+                }
+
                 Section("データ") {
                     Button {
                         showingExporter = true

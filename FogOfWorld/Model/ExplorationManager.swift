@@ -169,11 +169,26 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         for location in locations {
             guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 100 else { continue }
             currentLocation = location.coordinate
-            recordedPoints.append(RecordedPoint(coordinate: location.coordinate, timestamp: location.timestamp))
+            recordedPoints.append(RecordedPoint(
+                coordinate: location.coordinate,
+                timestamp: location.timestamp,
+                speed: location.speed,
+                horizontalAccuracy: location.horizontalAccuracy,
+                course: location.course,
+                isAutomotive: isAutomotive
+            ))
 
             let speedBased = location.speed >= interpolationSpeedThreshold && trackingSettings.accuracy != .standard
+            let inferredHighSpeed: Bool
+            if let prev = lastLocation {
+                let dist = location.distance(from: prev)
+                let dt = location.timestamp.timeIntervalSince(prev.timestamp)
+                inferredHighSpeed = dt > 0 && dist / dt >= interpolationSpeedThreshold && dist <= 2000
+            } else {
+                inferredHighSpeed = false
+            }
             if let prev = lastLocation,
-               speedBased || isAutomotive {
+               speedBased || isAutomotive || inferredHighSpeed {
                 let interpolated = TileCoord.interpolatedTiles(from: prev.coordinate, to: location.coordinate)
                 for tile in interpolated {
                     if visitedTiles.insert(tile).inserted {
