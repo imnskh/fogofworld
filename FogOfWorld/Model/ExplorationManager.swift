@@ -48,6 +48,19 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     private let interpolationSpeedThreshold: CLLocationSpeed = 60.0 / 3.6 // 60 km/h in m/s
     private let persistenceQueue = DispatchQueue(label: "com.twogate.fogworld.persistence")
 
+    // Stationary detection
+    private enum TrackingState { case moving, backgroundStationary }
+    private var trackingState: TrackingState = .moving
+    private var stationaryCheckStart: Date?
+    private var stationaryCheckAnchor: CLLocation?
+    private var isMotionStationary = false
+    private var awaitingFullAccuracyFix = false
+    private let stationaryRegionId = "com.twogate.fogworld.stationary"
+    private let stationaryConfirmationInterval: TimeInterval = 120
+    private let stationaryDisplacementThreshold: CLLocationDistance = 30
+    private let stationarySpeedThreshold: CLLocationSpeed = 1.0
+    private let stationaryGeofenceRadius: CLLocationDistance = 100
+
     override init() {
         SharedSettings.migrateStandardDefaultsIfNeeded()
         self.backgroundTrackingEnabled = SharedSettings.backgroundTrackingEnabled
@@ -56,13 +69,19 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         super.init()
         clManager.delegate = self
         clManager.desiredAccuracy = trackingSettings.accuracy.clAccuracy
-        clManager.distanceFilter = kCLDistanceFilterNone
+        clManager.distanceFilter = 5
+        clManager.activityType = .other
         clManager.pausesLocationUpdatesAutomatically = false
         SharedTileStore.migrateFromDocumentsIfNeeded()
         loadTiles()
         // マイグレーション/読み込み完了直後にWidget Timelineを更新。
         // これがないと、初回起動より前にWidgetがリフレッシュした場合に最大1時間古いキャッシュを表示しうる。
         WidgetCenter.shared.reloadAllTimelines()
+
+        if SharedSettings.isBackgroundStationary {
+            trackingState = .backgroundStationary
+            awaitingFullAccuracyFix = true
+        }
 
         startActivityMonitoring()
 
@@ -87,6 +106,7 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         activityManager.startActivityUpdates(to: .main) { [weak self] activity in
             guard let activity else { return }
             self?.isAutomotive = activity.automotive
+            self?.isMotionStationary = activity.stationary && activity.confidence != .low
         }
     }
 
@@ -122,6 +142,7 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
 
     @objc private func appDidEnterBackground() {
         isInForeground = false
+        clManager.pausesLocationUpdatesAutomatically = true
         if backgroundTrackingEnabled {
             clManager.desiredAccuracy = trackingSettings.accuracy.clAccuracy
         } else {
@@ -133,6 +154,11 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
 
     @objc private func appWillEnterForeground() {
         isInForeground = true
+        clManager.pausesLocationUpdatesAutomatically = false
+        if trackingState == .backgroundStationary {
+            resumeFromStationary()
+        }
+        resetStationaryCheck()
         // ウィジェットから backgroundTrackingEnabled が変更されている可能性があるので再読込。
         let storedTracking = SharedSettings.backgroundTrackingEnabled
         if storedTracking != backgroundTrackingEnabled {
@@ -165,10 +191,21 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        if trackingState == .backgroundStationary {
+            resumeFromStationary()
+            return
+        }
+
         var didChange = false
         for location in locations {
             guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 100 else { continue }
             currentLocation = location.coordinate
+
+            if awaitingFullAccuracyFix {
+                if location.horizontalAccuracy >= 20 { continue }
+                awaitingFullAccuracyFix = false
+            }
+
             recordedPoints.append(RecordedPoint(
                 coordinate: location.coordinate,
                 timestamp: location.timestamp,
@@ -203,8 +240,43 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
             }
             lastLocation = location
         }
+        if let location = lastLocation {
+            adjustAccuracyForProximity(to: location)
+            if !isInForeground {
+                evaluateStationaryConditions(location: location)
+            }
+        }
         if didChange || !locations.isEmpty {
             scheduleSave()
+        }
+    }
+
+    private func adjustAccuracyForProximity(to location: CLLocation) {
+        guard trackingSettings.accuracy != .standard else { return }
+
+        let currentTile = TileCoord(from: location.coordinate)
+        let userPoint = MKMapPoint(location.coordinate)
+        var nearest = Double.greatestFiniteMagnitude
+
+        for dx in -1...1 {
+            for dy in -1...1 {
+                let tile = TileCoord(x: currentTile.x + dx, y: currentTile.y + dy)
+                guard !visitedTiles.contains(tile) else { continue }
+                let rect = tile.mapRect
+                let clamped = MKMapPoint(
+                    x: max(rect.minX, min(rect.maxX, userPoint.x)),
+                    y: max(rect.minY, min(rect.maxY, userPoint.y))
+                )
+                nearest = min(nearest, userPoint.distance(to: clamped))
+            }
+        }
+
+        let target: CLLocationAccuracy = nearest < 50
+            ? trackingSettings.accuracy.clAccuracy
+            : kCLLocationAccuracyHundredMeters
+
+        if clManager.desiredAccuracy != target {
+            clManager.desiredAccuracy = target
         }
     }
 
@@ -216,7 +288,96 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         }
     }
 
+    func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+        guard region.identifier == stationaryRegionId else { return }
+        resumeFromStationary()
+    }
+
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}
+
+    // MARK: - Stationary Detection
+
+    private func evaluateStationaryConditions(location: CLLocation) {
+        guard trackingState == .moving, backgroundTrackingEnabled else { return }
+
+        guard location.speed >= 0, location.speed < stationarySpeedThreshold else {
+            resetStationaryCheck()
+            return
+        }
+
+        guard isMotionStationary else {
+            resetStationaryCheck()
+            return
+        }
+
+        guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 20 else {
+            return
+        }
+
+        if stationaryCheckAnchor == nil {
+            stationaryCheckAnchor = location
+            stationaryCheckStart = Date()
+            return
+        }
+
+        let displacement = location.distance(from: stationaryCheckAnchor!)
+        guard displacement < stationaryDisplacementThreshold else {
+            resetStationaryCheck()
+            return
+        }
+
+        guard let start = stationaryCheckStart,
+              Date().timeIntervalSince(start) >= stationaryConfirmationInterval else {
+            return
+        }
+
+        transitionToBackgroundStationary(at: location)
+    }
+
+    private func transitionToBackgroundStationary(at location: CLLocation) {
+        trackingState = .backgroundStationary
+        clManager.stopUpdatingLocation()
+
+        let region = CLCircularRegion(
+            center: location.coordinate,
+            radius: stationaryGeofenceRadius,
+            identifier: stationaryRegionId
+        )
+        region.notifyOnExit = true
+        region.notifyOnEntry = false
+        clManager.startMonitoring(for: region)
+
+        SharedSettings.isBackgroundStationary = true
+        SharedSettings.stationaryCenterLat = location.coordinate.latitude
+        SharedSettings.stationaryCenterLon = location.coordinate.longitude
+
+        saveSynchronously()
+        resetStationaryCheck()
+    }
+
+    private func resumeFromStationary() {
+        guard trackingState == .backgroundStationary else { return }
+        trackingState = .moving
+        awaitingFullAccuracyFix = true
+
+        for region in clManager.monitoredRegions where region.identifier == stationaryRegionId {
+            clManager.stopMonitoring(for: region)
+        }
+
+        clManager.desiredAccuracy = trackingSettings.accuracy.clAccuracy
+        clManager.startUpdatingLocation()
+
+        SharedSettings.isBackgroundStationary = false
+        SharedSettings.stationaryCenterLat = nil
+        SharedSettings.stationaryCenterLon = nil
+
+        resetStationaryCheck()
+    }
+
+    private func resetStationaryCheck() {
+        stationaryCheckAnchor = nil
+        stationaryCheckStart = nil
+    }
 
     // MARK: - Persistence
 

@@ -32,6 +32,33 @@ enum SharedSettings {
         set { defaults.set(newValue, forKey: fogEffectsEnabledKey) }
     }
 
+    // MARK: - Stationary Detection State
+
+    private static let isBackgroundStationaryKey = "isBackgroundStationary"
+    private static let stationaryCenterLatKey = "stationaryCenterLat"
+    private static let stationaryCenterLonKey = "stationaryCenterLon"
+
+    static var isBackgroundStationary: Bool {
+        get { defaults.bool(forKey: isBackgroundStationaryKey) }
+        set { defaults.set(newValue, forKey: isBackgroundStationaryKey) }
+    }
+
+    static var stationaryCenterLat: Double? {
+        get { defaults.object(forKey: stationaryCenterLatKey) as? Double }
+        set {
+            if let v = newValue { defaults.set(v, forKey: stationaryCenterLatKey) }
+            else { defaults.removeObject(forKey: stationaryCenterLatKey) }
+        }
+    }
+
+    static var stationaryCenterLon: Double? {
+        get { defaults.object(forKey: stationaryCenterLonKey) as? Double }
+        set {
+            if let v = newValue { defaults.set(v, forKey: stationaryCenterLonKey) }
+            else { defaults.removeObject(forKey: stationaryCenterLonKey) }
+        }
+    }
+
     // 旧バージョンが UserDefaults.standard に保存していた設定値をApp Groupへ移行する。
     // App Group側に値が無く、Standard側にだけある場合のみコピー。
     static func migrateStandardDefaultsIfNeeded() {
