@@ -28,6 +28,20 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
             SharedSettings.fogEffectsEnabled = fogEffectsEnabled
         }
     }
+    @Published var debugSimulateBackground = false {
+        didSet {
+            clManager.pausesLocationUpdatesAutomatically = !isEffectivelyInForeground
+            if debugSimulateBackground {
+                applyTrackingMode()
+            } else {
+                if trackingState == .backgroundStationary {
+                    resumeFromStationary()
+                }
+                resetStationaryCheck()
+                applyTrackingMode()
+            }
+        }
+    }
 
     var totalTiles: Int { visitedTiles.count }
 
@@ -43,6 +57,7 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     private let activityManager = CMMotionActivityManager()
     private var saveTask: DispatchWorkItem?
     private var isInForeground = true
+    private var isEffectivelyInForeground: Bool { isInForeground && !debugSimulateBackground }
     private var lastLocation: CLLocation?
     private var isAutomotive = false
     private let interpolationSpeedThreshold: CLLocationSpeed = 60.0 / 3.6 // 60 km/h in m/s
@@ -52,7 +67,6 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     private enum TrackingState { case moving, backgroundStationary }
     private var trackingState: TrackingState = .moving
     private var stationaryCheckStart: Date?
-    private var stationaryCheckAnchor: CLLocation?
     private var isMotionStationary = false
     private var awaitingFullAccuracyFix = false
     private let stationaryRegionId = "com.twogate.fogworld.stationary"
@@ -124,7 +138,7 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
             clManager.showsBackgroundLocationIndicator = true
             clManager.startMonitoringSignificantLocationChanges()
             clManager.startMonitoringVisits()
-            if isInForeground {
+            if isEffectivelyInForeground {
                 clManager.startUpdatingLocation()
             }
         } else {
@@ -132,7 +146,7 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
             clManager.showsBackgroundLocationIndicator = false
             clManager.stopMonitoringSignificantLocationChanges()
             clManager.stopMonitoringVisits()
-            if isInForeground {
+            if isEffectivelyInForeground {
                 clManager.startUpdatingLocation()
             } else {
                 clManager.stopUpdatingLocation()
@@ -154,11 +168,13 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
 
     @objc private func appWillEnterForeground() {
         isInForeground = true
-        clManager.pausesLocationUpdatesAutomatically = false
-        if trackingState == .backgroundStationary {
+        clManager.pausesLocationUpdatesAutomatically = !isEffectivelyInForeground
+        if trackingState == .backgroundStationary && isEffectivelyInForeground {
             resumeFromStationary()
         }
-        resetStationaryCheck()
+        if isEffectivelyInForeground {
+            resetStationaryCheck()
+        }
         // ウィジェットから backgroundTrackingEnabled が変更されている可能性があるので再読込。
         let storedTracking = SharedSettings.backgroundTrackingEnabled
         if storedTracking != backgroundTrackingEnabled {
@@ -196,6 +212,7 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
             return
         }
 
+        let previousLocation = lastLocation
         var didChange = false
         for location in locations {
             guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 100 else { continue }
@@ -242,8 +259,8 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         }
         if let location = lastLocation {
             adjustAccuracyForProximity(to: location)
-            if !isInForeground {
-                evaluateStationaryConditions(location: location)
+            if !isEffectivelyInForeground {
+                evaluateStationaryConditions(location: location, previous: previousLocation)
             }
         }
         if didChange || !locations.isEmpty {
@@ -297,10 +314,11 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
 
     // MARK: - Stationary Detection
 
-    private func evaluateStationaryConditions(location: CLLocation) {
+    private func evaluateStationaryConditions(location: CLLocation, previous: CLLocation?) {
         guard trackingState == .moving, backgroundTrackingEnabled else { return }
 
-        guard location.speed >= 0, location.speed < stationarySpeedThreshold else {
+        let speedValid = location.speed >= 0
+        guard !speedValid || location.speed < stationarySpeedThreshold else {
             resetStationaryCheck()
             return
         }
@@ -310,20 +328,16 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
             return
         }
 
-        guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 20 else {
-            return
+        if let prev = previous {
+            let distance = location.distance(from: prev)
+            guard distance < stationaryDisplacementThreshold else {
+                resetStationaryCheck()
+                return
+            }
         }
 
-        if stationaryCheckAnchor == nil {
-            stationaryCheckAnchor = location
+        if stationaryCheckStart == nil {
             stationaryCheckStart = Date()
-            return
-        }
-
-        let displacement = location.distance(from: stationaryCheckAnchor!)
-        guard displacement < stationaryDisplacementThreshold else {
-            resetStationaryCheck()
-            return
         }
 
         guard let start = stationaryCheckStart,
@@ -375,7 +389,6 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
     }
 
     private func resetStationaryCheck() {
-        stationaryCheckAnchor = nil
         stationaryCheckStart = nil
     }
 
@@ -415,6 +428,92 @@ final class ExplorationManager: NSObject, ObservableObject, CLLocationManagerDel
         visitedTiles = SharedTileStore.load()
         recordedPoints = SharedTileStore.loadPoints()
         SharedSettings.cachedTileCount = visitedTiles.count
+    }
+
+    // MARK: - Debug Info
+
+    struct DebugInfo {
+        let trackingState: String
+        let desiredAccuracy: CLLocationAccuracy
+        let distanceFilter: CLLocationDistance
+        let activityType: String
+        let pausesAutomatically: Bool
+        let allowsBackground: Bool
+        let authorizationStatus: String
+        let isInForeground: Bool
+        let debugSimulateBackground: Bool
+        let isMotionStationary: Bool
+        let isAutomotive: Bool
+        let awaitingFullAccuracyFix: Bool
+        let backgroundTrackingEnabled: Bool
+        let accuracySetting: String
+        let lastCoordinate: CLLocationCoordinate2D?
+        let lastSpeed: CLLocationSpeed?
+        let lastHorizontalAccuracy: CLLocationAccuracy?
+        let lastTimestamp: Date?
+        let stationaryCheckActive: Bool
+        let stationaryCheckElapsed: TimeInterval?
+        let geofenceActive: Bool
+        let geofenceCenter: CLLocationCoordinate2D?
+        let geofenceRadius: CLLocationDistance?
+        let monitoredRegionCount: Int
+        let tileCount: Int
+        let pointCount: Int
+    }
+
+    func captureDebugInfo() -> DebugInfo {
+        let geofenceRegion = clManager.monitoredRegions
+            .compactMap { $0 as? CLCircularRegion }
+            .first { $0.identifier == stationaryRegionId }
+
+        let statusString: String
+        switch clManager.authorizationStatus {
+        case .notDetermined: statusString = "notDetermined"
+        case .restricted: statusString = "restricted"
+        case .denied: statusString = "denied"
+        case .authorizedAlways: statusString = "authorizedAlways"
+        case .authorizedWhenInUse: statusString = "authorizedWhenInUse"
+        @unknown default: statusString = "unknown"
+        }
+
+        let activityString: String
+        switch clManager.activityType {
+        case .other: activityString = "other"
+        case .automotiveNavigation: activityString = "automotiveNavigation"
+        case .fitness: activityString = "fitness"
+        case .otherNavigation: activityString = "otherNavigation"
+        case .airborne: activityString = "airborne"
+        @unknown default: activityString = "unknown"
+        }
+
+        return DebugInfo(
+            trackingState: trackingState == .moving ? "moving" : "backgroundStationary",
+            desiredAccuracy: clManager.desiredAccuracy,
+            distanceFilter: clManager.distanceFilter,
+            activityType: activityString,
+            pausesAutomatically: clManager.pausesLocationUpdatesAutomatically,
+            allowsBackground: clManager.allowsBackgroundLocationUpdates,
+            authorizationStatus: statusString,
+            isInForeground: isInForeground,
+            debugSimulateBackground: debugSimulateBackground,
+            isMotionStationary: isMotionStationary,
+            isAutomotive: isAutomotive,
+            awaitingFullAccuracyFix: awaitingFullAccuracyFix,
+            backgroundTrackingEnabled: backgroundTrackingEnabled,
+            accuracySetting: trackingSettings.accuracy.rawValue,
+            lastCoordinate: lastLocation?.coordinate,
+            lastSpeed: lastLocation?.speed,
+            lastHorizontalAccuracy: lastLocation?.horizontalAccuracy,
+            lastTimestamp: lastLocation?.timestamp,
+            stationaryCheckActive: stationaryCheckStart != nil,
+            stationaryCheckElapsed: stationaryCheckStart.map { Date().timeIntervalSince($0) },
+            geofenceActive: geofenceRegion != nil,
+            geofenceCenter: geofenceRegion?.center,
+            geofenceRadius: geofenceRegion?.radius,
+            monitoredRegionCount: clManager.monitoredRegions.count,
+            tileCount: visitedTiles.count,
+            pointCount: recordedPoints.count
+        )
     }
 
     // MARK: - Import / Export
