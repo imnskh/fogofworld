@@ -70,6 +70,12 @@ struct SettingsView: View {
 
                 Section("デバッグ") {
                     NavigationLink {
+                        DebugStatusView()
+                            .environmentObject(explorationManager)
+                    } label: {
+                        Label("トラッキング状態", systemImage: "gauge.with.dots.needle.33percent")
+                    }
+                    NavigationLink {
                         DebugPointsView()
                             .environmentObject(explorationManager)
                     } label: {
