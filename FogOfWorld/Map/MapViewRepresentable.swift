@@ -106,20 +106,34 @@ struct MapViewRepresentable: UIViewRepresentable {
             // enter history
             coordinator.isHistoryMode = true
             coordinator.trackRenderer?.updatePoints(points)
-            updateHistoryMarker(mapView: mapView, coordinator: coordinator)
+            coordinator.lastHistoryPointsKey = HistoryPointsKey(points)
+            syncHistoryAnnotation(mapView: mapView, coordinator: coordinator)
+            // 突入時は自動フィット。スクラブ追従より優先するためここで lastHistoryMarkerCoordinate を
+            // 先に記録し、後段の追従ロジックでカメラを上書きさせない。
+            performAutoFitIfNeeded(mapView: mapView, points: points, coordinator: coordinator)
 
         case (true, .some(let points)):
             // continue history — 日付が変わった or scrub
-            if coordinator.lastHistoryPointsKey != HistoryPointsKey(points) {
+            let newKey = HistoryPointsKey(points)
+            let dayChanged = coordinator.lastHistoryPointsKey != newKey
+            if dayChanged {
                 coordinator.trackRenderer?.updatePoints(points)
-                coordinator.lastHistoryPointsKey = HistoryPointsKey(points)
+                coordinator.lastHistoryPointsKey = newKey
             }
-            updateHistoryMarker(mapView: mapView, coordinator: coordinator)
+            syncHistoryAnnotation(mapView: mapView, coordinator: coordinator)
+            if dayChanged {
+                performAutoFitIfNeeded(mapView: mapView, points: points, coordinator: coordinator)
+            } else {
+                // スクラブ — マーカー座標が変わった時だけセンタ追従。
+                centerOnMarkerIfChanged(mapView: mapView, coordinator: coordinator)
+            }
 
         case (true, .none):
             // exit history
             coordinator.isHistoryMode = false
             coordinator.lastHistoryPointsKey = nil
+            coordinator.historyFitKey = nil
+            coordinator.lastHistoryMarkerCoordinate = nil
             // 個別参照経由の removeAnnotation が KVO/再エンキューと競合してビューが残ることがあるため、
             // マップ上の HistoryAnnotation インスタンスを総ざらいして除去する。
             let stale = mapView.annotations.compactMap { $0 as? HistoryAnnotation }
@@ -140,7 +154,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         }
     }
 
-    private func updateHistoryMarker(mapView: MKMapView, coordinator: Coordinator) {
+    private func syncHistoryAnnotation(mapView: MKMapView, coordinator: Coordinator) {
         guard let coordinate = historyMarkerCoordinate, let timeString = historyMarkerTimeString else {
             // 個別参照経由の removeAnnotation は KVO/再エンキューと競合しうるため、
             // 記録のない日に切り替わった場合も総ざらいで除去する (exit 時と同じ防御)。
@@ -149,6 +163,7 @@ struct MapViewRepresentable: UIViewRepresentable {
                 mapView.removeAnnotations(stale)
             }
             coordinator.historyAnnotation = nil
+            coordinator.lastHistoryMarkerCoordinate = nil
             return
         }
 
@@ -159,8 +174,59 @@ struct MapViewRepresentable: UIViewRepresentable {
             mapView.addAnnotation(ann)
             coordinator.historyAnnotation = ann
         }
+    }
+
+    private func centerOnMarkerIfChanged(mapView: MKMapView, coordinator: Coordinator) {
+        guard let coord = historyMarkerCoordinate else { return }
+        if let last = coordinator.lastHistoryMarkerCoordinate,
+           abs(last.latitude - coord.latitude) < 1e-9,
+           abs(last.longitude - coord.longitude) < 1e-9 {
+            return
+        }
         // スライダースクラブ中に大量のアニメが積み上がるとドラッグ終了後も追従し続けるため非アニメ。
-        mapView.setCenter(coordinate, animated: false)
+        mapView.setCenter(coord, animated: false)
+        coordinator.lastHistoryMarkerCoordinate = coord
+    }
+
+    private func performAutoFitIfNeeded(mapView: MKMapView, points: [RecordedPoint], coordinator: Coordinator) {
+        let key = HistoryPointsKey(points)
+        guard coordinator.historyFitKey != key else { return }
+        coordinator.historyFitKey = key
+        guard !points.isEmpty else { return }
+
+        if points.count == 1 {
+            let region = MKCoordinateRegion(center: points[0].coordinate, latitudinalMeters: 1000, longitudinalMeters: 1000)
+            mapView.setRegion(region, animated: true)
+            coordinator.lastHistoryMarkerCoordinate = historyMarkerCoordinate
+            return
+        }
+
+        // 全点を含む MKMapRect を構築。
+        var rect = MKMapRect.null
+        for p in points {
+            let mp = MKMapPoint(p.coordinate)
+            rect = rect.union(MKMapRect(x: mp.x, y: mp.y, width: 0, height: 0))
+        }
+
+        // 飛行機など広範囲の日はフィットすると地球規模になり実用にならない。
+        // 対角距離 50km を閾値に、超えた場合は最終測位ポイント中心+半径2km にズーム。
+        let nwCoord = MKMapPoint(x: rect.minX, y: rect.minY).coordinate
+        let seCoord = MKMapPoint(x: rect.maxX, y: rect.maxY).coordinate
+        let nw = CLLocation(latitude: nwCoord.latitude, longitude: nwCoord.longitude)
+        let se = CLLocation(latitude: seCoord.latitude, longitude: seCoord.longitude)
+        let diag = nw.distance(from: se)
+
+        if diag <= 50_000 {
+            // ヘッダ/コントロールバーに隠れない余白。
+            let padding = UIEdgeInsets(top: 80, left: 40, bottom: 200, right: 40)
+            mapView.setVisibleMapRect(rect, edgePadding: padding, animated: true)
+        } else {
+            let last = points[points.count - 1].coordinate
+            let region = MKCoordinateRegion(center: last, latitudinalMeters: 4000, longitudinalMeters: 4000)
+            mapView.setRegion(region, animated: true)
+        }
+        // フィット直後に centerOnMarkerIfChanged が走ってカメラを上書きしないよう、現マーカー座標で初期化。
+        coordinator.lastHistoryMarkerCoordinate = historyMarkerCoordinate
     }
 
     final class Coordinator: NSObject, MKMapViewDelegate {
@@ -178,6 +244,10 @@ struct MapViewRepresentable: UIViewRepresentable {
         var historyAnnotation: HistoryAnnotation?
         var lastHistoryPointsKey: HistoryPointsKey?
         var lastShowPoints = false
+        // 自動フィットを「同じ日付スナップショットでは1回だけ」にするための鍵。
+        var historyFitKey: HistoryPointsKey?
+        // マーカー座標の変化検知用。座標が変わらない update でカメラを動かさないためのキャッシュ。
+        var lastHistoryMarkerCoordinate: CLLocationCoordinate2D?
         // タップ→最近傍点インデックスを返すためのハンドラと、検索対象になる現在の dayPoints。
         // updateUIView で MapViewRepresentable から同期される。
         var historyDayPoints: [RecordedPoint]?
