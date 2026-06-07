@@ -6,6 +6,9 @@ struct MapViewRepresentable: UIViewRepresentable {
     @ObservedObject var explorationManager: ExplorationManager
     var zoomDelta: Int
     var showTrack: Bool
+    var historyDayPoints: [RecordedPoint]?
+    var historyMarkerCoordinate: CLLocationCoordinate2D?
+    var historyMarkerTimeString: String?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(explorationManager: explorationManager)
@@ -22,6 +25,8 @@ struct MapViewRepresentable: UIViewRepresentable {
         mapView.showsUserLocation = true
         mapView.showsCompass = true
         mapView.showsScale = true
+
+        mapView.register(HistoryAnnotationView.self, forAnnotationViewWithReuseIdentifier: HistoryAnnotationView.reuseIdentifier)
 
         let trackOverlay = TrackOverlay()
         mapView.addOverlay(trackOverlay, level: .aboveRoads)
@@ -44,27 +49,97 @@ struct MapViewRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: MKMapView, context: Context) {
-        if zoomDelta != context.coordinator.lastZoomDelta {
-            context.coordinator.lastZoomDelta = zoomDelta
+        let coord = context.coordinator
+
+        if zoomDelta != coord.lastZoomDelta {
+            coord.lastZoomDelta = zoomDelta
             var region = uiView.region
-            let factor = zoomDelta > context.coordinator.previousZoomValue ? 0.5 : 2.0
-            context.coordinator.previousZoomValue = zoomDelta
+            let factor = zoomDelta > coord.previousZoomValue ? 0.5 : 2.0
+            coord.previousZoomValue = zoomDelta
             region.span.latitudeDelta *= factor
             region.span.longitudeDelta *= factor
             uiView.setRegion(region, animated: true)
         }
-        if showTrack != context.coordinator.trackVisible {
-            context.coordinator.trackVisible = showTrack
-            context.coordinator.trackRenderer?.visible = showTrack
-            context.coordinator.trackRenderer?.setNeedsDisplay()
+        if showTrack != coord.trackVisible {
+            coord.trackVisible = showTrack
+            coord.trackRenderer?.visible = showTrack
+            coord.trackRenderer?.setNeedsDisplay()
         }
-        context.coordinator.fogRenderer?.effectsEnabled = explorationManager.fogEffectsEnabled
-        let interval = explorationManager.trackingSettings.trackDisplayHours.timeInterval
-        if interval != context.coordinator.lastDisplayInterval {
-            context.coordinator.lastDisplayInterval = interval
-            context.coordinator.trackRenderer?.displayTimeInterval = interval
-            context.coordinator.trackRenderer?.setNeedsDisplay()
+        coord.fogRenderer?.effectsEnabled = explorationManager.fogEffectsEnabled
+        // 履歴モード中は「直近N時間」フィルタを無効化して指定日の全軌跡を見せる。
+        // 通常モードに戻ったらユーザー設定を復元する。
+        let userInterval = explorationManager.trackingSettings.trackDisplayHours.timeInterval
+        let effectiveInterval: TimeInterval? = (historyDayPoints != nil) ? nil : userInterval
+        if effectiveInterval != coord.lastDisplayInterval {
+            coord.lastDisplayInterval = effectiveInterval
+            coord.trackRenderer?.displayTimeInterval = effectiveInterval
+            coord.trackRenderer?.setNeedsDisplay()
         }
+
+        applyHistoryState(mapView: uiView, coordinator: coord)
+    }
+
+    private func applyHistoryState(mapView: MKMapView, coordinator: Coordinator) {
+        switch (coordinator.isHistoryMode, historyDayPoints) {
+        case (false, .some(let points)):
+            // enter history
+            coordinator.isHistoryMode = true
+            coordinator.trackRenderer?.updatePoints(points)
+            updateHistoryMarker(mapView: mapView, coordinator: coordinator)
+
+        case (true, .some(let points)):
+            // continue history — 日付が変わった or scrub
+            if coordinator.lastHistoryPointsKey != HistoryPointsKey(points) {
+                coordinator.trackRenderer?.updatePoints(points)
+                coordinator.lastHistoryPointsKey = HistoryPointsKey(points)
+            }
+            updateHistoryMarker(mapView: mapView, coordinator: coordinator)
+
+        case (true, .none):
+            // exit history
+            coordinator.isHistoryMode = false
+            coordinator.lastHistoryPointsKey = nil
+            // 個別参照経由の removeAnnotation が KVO/再エンキューと競合してビューが残ることがあるため、
+            // マップ上の HistoryAnnotation インスタンスを総ざらいして除去する。
+            let stale = mapView.annotations.compactMap { $0 as? HistoryAnnotation }
+            if !stale.isEmpty {
+                mapView.removeAnnotations(stale)
+            }
+            coordinator.historyAnnotation = nil
+            let all = explorationManager.recordedPoints
+            coordinator.trackRenderer?.updatePoints(all)
+            coordinator.lastPointCount = all.count
+            // 履歴で動かしたカメラを現在地に戻す。userLocation の方が新鮮なので優先。
+            if let coord = mapView.userLocation.location?.coordinate ?? explorationManager.currentLocation {
+                mapView.setCenter(coord, animated: true)
+            }
+
+        case (false, .none):
+            break
+        }
+    }
+
+    private func updateHistoryMarker(mapView: MKMapView, coordinator: Coordinator) {
+        guard let coordinate = historyMarkerCoordinate, let timeString = historyMarkerTimeString else {
+            // 個別参照経由の removeAnnotation は KVO/再エンキューと競合しうるため、
+            // 記録のない日に切り替わった場合も総ざらいで除去する (exit 時と同じ防御)。
+            let stale = mapView.annotations.compactMap { $0 as? HistoryAnnotation }
+            if !stale.isEmpty {
+                mapView.removeAnnotations(stale)
+            }
+            coordinator.historyAnnotation = nil
+            return
+        }
+
+        if let ann = coordinator.historyAnnotation {
+            ann.update(coordinate: coordinate, timeString: timeString)
+        } else {
+            let ann = HistoryAnnotation(coordinate: coordinate, timeString: timeString)
+            mapView.addAnnotation(ann)
+            coordinator.historyAnnotation = ann
+        }
+        // スライダースクラブ中に大量のアニメが積み上がるとドラッグ終了後も追従し続けるため非アニメ。
+        mapView.setCenter(coordinate, animated: false)
     }
 
     final class Coordinator: NSObject, MKMapViewDelegate {
@@ -77,6 +152,10 @@ struct MapViewRepresentable: UIViewRepresentable {
         var lastPointCount = 0
         var trackVisible = true
         var lastDisplayInterval: TimeInterval?
+
+        var isHistoryMode = false
+        var historyAnnotation: HistoryAnnotation?
+        var lastHistoryPointsKey: HistoryPointsKey?
 
         init(explorationManager: ExplorationManager) {
             self.explorationManager = explorationManager
@@ -95,7 +174,11 @@ struct MapViewRepresentable: UIViewRepresentable {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] points in
                     guard let self else { return }
-                    if self.lastPointCount == 0 {
+                    // 履歴モード中は生 recordedPoints の追従を停止して、表示中の日付スナップショットを保つ。
+                    if self.isHistoryMode { return }
+                    // import.replace 等で配列が縮小した場合 points[lastPointCount...] が範囲外で trap するため
+                    // 縮小・初回の両方を「全置換」経路に寄せる。
+                    if self.lastPointCount == 0 || self.lastPointCount > points.count {
                         self.trackRenderer?.updatePoints(points)
                     } else {
                         for point in points[self.lastPointCount...] {
@@ -126,6 +209,14 @@ struct MapViewRepresentable: UIViewRepresentable {
             return MKOverlayRenderer(overlay: overlay)
         }
 
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            if annotation is HistoryAnnotation {
+                let view = mapView.dequeueReusableAnnotationView(withIdentifier: HistoryAnnotationView.reuseIdentifier, for: annotation)
+                return view
+            }
+            return nil
+        }
+
         func mapView(_ mapView: MKMapView, didUpdate userLocation: MKUserLocation) {
             guard !hasCenteredOnUser else { return }
             let region = MKCoordinateRegion(
@@ -136,5 +227,19 @@ struct MapViewRepresentable: UIViewRepresentable {
             mapView.setRegion(region, animated: true)
             hasCenteredOnUser = true
         }
+    }
+}
+
+// 履歴用ポイント配列が「同じ日付の同じスナップショット」かを判定するためのキー。
+// 配列同一性ではなく内容識別 (件数 + 先頭/末尾 timestamp) で十分。
+struct HistoryPointsKey: Equatable {
+    let count: Int
+    let firstStamp: Date?
+    let lastStamp: Date?
+
+    init(_ points: [RecordedPoint]) {
+        count = points.count
+        firstStamp = points.first?.timestamp
+        lastStamp = points.last?.timestamp
     }
 }

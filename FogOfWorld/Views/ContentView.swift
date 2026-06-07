@@ -5,11 +5,36 @@ struct ContentView: View {
     @State private var zoomDelta = 0
     @State private var showSettings = false
     @State private var showTrack = true
+    @State private var historyMode: HistoryMode?
 
     var body: some View {
         ZStack {
-            MapViewRepresentable(explorationManager: explorationManager, zoomDelta: zoomDelta, showTrack: showTrack)
-                .ignoresSafeArea()
+            MapViewRepresentable(
+                explorationManager: explorationManager,
+                zoomDelta: zoomDelta,
+                showTrack: showTrack,
+                historyDayPoints: historyMode?.dayPoints,
+                historyMarkerCoordinate: historyMarkerPoint?.coordinate,
+                historyMarkerTimeString: historyMarkerPoint.map { Self.formatTime($0.timestamp) }
+            )
+            .ignoresSafeArea()
+
+            VStack {
+                if historyMode != nil {
+                    HistoryHeaderBar(
+                        date: Binding(
+                            // get クロージャは self.historyMode を直接参照する。ローカル束縛の
+                            // unwrap 値をキャプチャすると DatePicker sheet が開いている間の更新で
+                            // ステイル値を返しうる。
+                            get: { self.historyMode?.date ?? Calendar.current.startOfDay(for: Date()) },
+                            set: { changeHistoryDate(to: $0) }
+                        ),
+                        dateRange: historyDateRange ?? (Calendar.current.startOfDay(for: Date())...Calendar.current.startOfDay(for: Date())),
+                        onClose: { self.historyMode = nil }
+                    )
+                }
+                Spacer()
+            }
 
             VStack {
                 Spacer()
@@ -30,6 +55,20 @@ struct ContentView: View {
                 Spacer()
                 if explorationManager.authorizationDenied {
                     permissionDeniedBanner
+                } else if historyMode != nil {
+                    HistoryControlBar(
+                        sliderValue: Binding(
+                            get: { historyMode?.sliderValue ?? 0 },
+                            set: { newValue in
+                                guard var updated = historyMode else { return }
+                                updated.sliderValue = newValue
+                                self.historyMode = updated
+                            }
+                        ),
+                        pointCount: historyMode?.dayPoints.count ?? 0,
+                        startLabel: historyMode?.dayPoints.first.map { Self.formatTime($0.timestamp) } ?? "--:--",
+                        endLabel: historyMode?.dayPoints.last.map { Self.formatTime($0.timestamp) } ?? "--:--"
+                    )
                 } else {
                     statsBar
                 }
@@ -37,26 +76,89 @@ struct ContentView: View {
         }
     }
 
-    private var statsBar: some View {
-        HStack(spacing: 12) {
-            Label(
-                "\(explorationManager.totalTiles)",
-                systemImage: "square.grid.3x3.fill"
-            )
-            .font(.caption)
+    // MARK: - History helpers
 
-            Text("·")
-                .foregroundStyle(.secondary)
+    // 履歴モード突入時に該当日分のポイントをキャッシュする。スライダースクラブのたびに
+    // 全 recordedPoints を filter するとフレームレートが破綻するため、HistoryMode に格納して再利用。
+    private var historyMarkerPoint: RecordedPoint? {
+        guard let historyMode, !historyMode.dayPoints.isEmpty else { return nil }
+        let idx = max(0, min(historyMode.dayPoints.count - 1, Int(historyMode.sliderValue.rounded())))
+        return historyMode.dayPoints[idx]
+    }
 
-            Label(
-                explorationManager.exploredAreaFormatted,
-                systemImage: "map.fill"
-            )
-            .font(.caption)
+    private var historyDateRange: ClosedRange<Date>? {
+        // 既存セッションの earliestDay を優先。履歴突入前に呼ばれた場合のみ recordedPoints を走査する。
+        let cal = Calendar.current
+        if let mode = historyMode {
+            return mode.earliestDay...cal.startOfDay(for: Date())
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: Capsule())
+        guard let earliest = explorationManager.recordedPoints.min(by: { $0.timestamp < $1.timestamp })?.timestamp else { return nil }
+        return cal.startOfDay(for: earliest)...cal.startOfDay(for: Date())
+    }
+
+    private func changeHistoryDate(to newDate: Date) {
+        let day = Calendar.current.startOfDay(for: newDate)
+        let cal = Calendar.current
+        // 同日判定でフィルタしつつ timestamp 昇順にソート。
+        // バッチ配信で順序が逆転するケースがあるため明示的にソートしないと marker 検索順が壊れる。
+        let points = explorationManager.recordedPoints
+            .filter { cal.isDate($0.timestamp, inSameDayAs: day) }
+            .sorted { $0.timestamp < $1.timestamp }
+        // 初期選択はその日の最終測位ポイント。空配列なら 0 でガード済み。
+        let initial = Double(max(0, points.count - 1))
+        // earliestDay は同一履歴セッション中は不変扱い。新規エントリ時に1回だけ算出する。
+        let earliestDay: Date = {
+            if let existing = historyMode?.earliestDay { return existing }
+            let earliestStamp = explorationManager.recordedPoints
+                .min(by: { $0.timestamp < $1.timestamp })?.timestamp ?? Date()
+            return cal.startOfDay(for: earliestStamp)
+        }()
+        historyMode = HistoryMode(date: day, sliderValue: initial, dayPoints: points, earliestDay: earliestDay)
+    }
+
+    // スライダースクラブ中に毎フレーム生成するとフレームドロップの要因になるためキャッシュ。
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    private static func formatTime(_ date: Date) -> String {
+        timeFormatter.string(from: date)
+    }
+
+    private func enterHistoryMode() {
+        changeHistoryDate(to: Date())
+    }
+
+    private var statsBar: some View {
+        Button {
+            guard !explorationManager.recordedPoints.isEmpty else { return }
+            enterHistoryMode()
+        } label: {
+            HStack(spacing: 12) {
+                Label(
+                    "\(explorationManager.totalTiles)",
+                    systemImage: "square.grid.3x3.fill"
+                )
+                .font(.caption)
+
+                Text("·")
+                    .foregroundStyle(.secondary)
+
+                Label(
+                    explorationManager.exploredAreaFormatted,
+                    systemImage: "map.fill"
+                )
+                .font(.caption)
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(explorationManager.recordedPoints.isEmpty)
         .padding(.bottom, 44)
     }
 
@@ -127,4 +229,14 @@ struct ContentView: View {
         .padding(.bottom, 60)
         .padding(.horizontal, 20)
     }
+}
+
+struct HistoryMode {
+    var date: Date
+    // dayPoints 内のインデックスを表す Slider 値。Slider が BinaryFloatingPoint を要求するため Double。
+    var sliderValue: Double
+    var dayPoints: [RecordedPoint]
+    // DatePicker 範囲下限のキャッシュ。recordedPoints.min(by:) を body 毎に走らせると
+    // 大規模履歴でスクラブ時にスキャンコストが効くため、エントリ時に1回計算して保持する。
+    let earliestDay: Date
 }
