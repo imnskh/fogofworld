@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreLocation
 
 struct ContentView: View {
     @EnvironmentObject var explorationManager: ExplorationManager
@@ -75,7 +76,7 @@ struct ContentView: View {
                                 self.historyMode = updated
                             }
                         ),
-                        pointCount: historyMode?.dayPoints.count ?? 0,
+                        stats: historyMode?.stats ?? HistoryStats(totalDistanceMeters: 0, movingDuration: 0, pointCount: 0),
                         startLabel: historyMode?.dayPoints.first.map { Self.formatTime($0.timestamp) } ?? "--:--",
                         endLabel: historyMode?.dayPoints.last.map { Self.formatTime($0.timestamp) } ?? "--:--"
                     )
@@ -123,7 +124,34 @@ struct ContentView: View {
                 .min(by: { $0.timestamp < $1.timestamp })?.timestamp ?? Date()
             return cal.startOfDay(for: earliestStamp)
         }()
-        historyMode = HistoryMode(date: day, sliderValue: initial, dayPoints: points, earliestDay: earliestDay)
+        let stats = Self.computeStats(points)
+        historyMode = HistoryMode(date: day, sliderValue: initial, dayPoints: points, earliestDay: earliestDay, stats: stats)
+    }
+
+    private static func computeStats(_ points: [RecordedPoint]) -> HistoryStats {
+        guard points.count >= 2 else {
+            return HistoryStats(totalDistanceMeters: 0, movingDuration: 0, pointCount: points.count)
+        }
+        var totalMeters = 0.0
+        var movingSeconds = 0.0
+        for i in 1..<points.count {
+            let prev = points[i - 1]
+            let cur = points[i]
+            let d = CLLocation(latitude: prev.latitude, longitude: prev.longitude)
+                .distance(from: CLLocation(latitude: cur.latitude, longitude: cur.longitude))
+            totalMeters += d
+            let dt = cur.timestamp.timeIntervalSince(prev.timestamp)
+            // 区間平均速度が閾値以上なら「移動中」とみなして時間を加算。
+            // 片端だけ高速 / 片端のみ nil でも nil = 0 として扱う (停止扱いに寄せる)。
+            // CoreLocation は速度不正時に負値 (-1) を返すため max(_, 0) で正規化。
+            let prevSpeed = max(prev.speed ?? 0, 0)
+            let curSpeed = max(cur.speed ?? 0, 0)
+            let avgSpeed = (prevSpeed + curSpeed) / 2
+            if avgSpeed >= movingSpeedThreshold {
+                movingSeconds += dt
+            }
+        }
+        return HistoryStats(totalDistanceMeters: totalMeters, movingDuration: movingSeconds, pointCount: points.count)
     }
 
     // スライダースクラブ中に毎フレーム生成するとフレームドロップの要因になるためキャッシュ。
@@ -268,4 +296,12 @@ struct HistoryMode {
     // DatePicker 範囲下限のキャッシュ。recordedPoints.min(by:) を body 毎に走らせると
     // 大規模履歴でスクラブ時にスキャンコストが効くため、エントリ時に1回計算して保持する。
     let earliestDay: Date
+    // 当該日の集計値。changeHistoryDate で1回計算してキャッシュし、スクラブ中は再計算しない。
+    let stats: HistoryStats
+}
+
+struct HistoryStats {
+    let totalDistanceMeters: Double
+    let movingDuration: TimeInterval
+    let pointCount: Int
 }
