@@ -41,8 +41,9 @@ struct ContentView: View {
                             set: { changeHistoryDate(to: $0) }
                         ),
                         dateRange: historyDateRange ?? (Calendar.current.startOfDay(for: Date())...Calendar.current.startOfDay(for: Date())),
-                        onClose: { self.historyMode = nil }
+                        onClose: { exitHistoryMode() }
                     )
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 Spacer()
             }
@@ -80,8 +81,10 @@ struct ContentView: View {
                         startLabel: historyMode?.dayPoints.first.map { Self.formatTime($0.timestamp) } ?? "--:--",
                         endLabel: historyMode?.dayPoints.last.map { Self.formatTime($0.timestamp) } ?? "--:--"
                     )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else {
                     statsBar
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
         }
@@ -185,7 +188,17 @@ struct ContentView: View {
     }
 
     private func enterHistoryMode() {
-        changeHistoryDate(to: Date())
+        // 入退場アニメーション。changeHistoryDate を直接ラップすると同関数を
+        // 日付変更経路 (mid-history) からも使うため、入口専用にここだけアニメ化する。
+        withAnimation(.easeInOut(duration: 0.25)) {
+            changeHistoryDate(to: Date())
+        }
+    }
+
+    private func exitHistoryMode() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            historyMode = nil
+        }
     }
 
     private var statsBar: some View {
