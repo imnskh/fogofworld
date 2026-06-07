@@ -9,6 +9,9 @@ struct MapViewRepresentable: UIViewRepresentable {
     var historyDayPoints: [RecordedPoint]?
     var historyMarkerCoordinate: CLLocationCoordinate2D?
     var historyMarkerTimeString: String?
+    var historyMarkerSpeedString: String?
+    // 度。nil の場合はドット表示、ある場合は矢印を回転させて表示する。
+    var historyMarkerCourse: Double?
     // 履歴モード時のみマップタップで最近傍点のインデックスを通知する。通常モードでは nil 化される。
     var onHistoryMapTap: ((Int) -> Void)?
 
@@ -168,9 +171,9 @@ struct MapViewRepresentable: UIViewRepresentable {
         }
 
         if let ann = coordinator.historyAnnotation {
-            ann.update(coordinate: coordinate, timeString: timeString)
+            ann.update(coordinate: coordinate, timeString: timeString, speedString: historyMarkerSpeedString, course: historyMarkerCourse)
         } else {
-            let ann = HistoryAnnotation(coordinate: coordinate, timeString: timeString)
+            let ann = HistoryAnnotation(coordinate: coordinate, timeString: timeString, speedString: historyMarkerSpeedString, course: historyMarkerCourse)
             mapView.addAnnotation(ann)
             coordinator.historyAnnotation = ann
         }

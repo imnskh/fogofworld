@@ -16,6 +16,8 @@ struct ContentView: View {
                 historyDayPoints: historyMode?.dayPoints,
                 historyMarkerCoordinate: historyMarkerPoint?.coordinate,
                 historyMarkerTimeString: historyMarkerPoint.map { Self.formatTime($0.timestamp) },
+                historyMarkerSpeedString: historyMarkerPoint.flatMap { Self.formatSpeed($0) },
+                historyMarkerCourse: historyMarkerPoint.flatMap { Self.markerCourse(for: $0) },
                 onHistoryMapTap: { idx in
                     // タップされた最近傍ポイントのインデックスを sliderValue に反映する。
                     // historyMode が nil の場合は無視 (ジェスチャ側でも無効化されている)。
@@ -133,6 +135,25 @@ struct ContentView: View {
 
     private static func formatTime(_ date: Date) -> String {
         timeFormatter.string(from: date)
+    }
+
+    // 移動判定の閾値。これ以下は停止扱いで矢印ではなくドットを出す。
+    // 速度ラベル表示の閾値 (1 km/h ≈ 0.28 m/s) より高めにとってある:
+    // 1 km/h 未満は誤差レベルで数値も意味がない / 矢印は向きを示すので明確に「動いている」レンジに限定する。
+    private static let movingSpeedThreshold: Double = 0.5 // m/s
+
+    private static func formatSpeed(_ point: RecordedPoint) -> String? {
+        guard let kmh = point.speedKmh else { return nil }
+        // 1 km/h 未満は意味のない誤差なので非表示。
+        guard kmh >= 1 else { return nil }
+        return "\(Int(kmh.rounded())) km/h"
+    }
+
+    private static func markerCourse(for point: RecordedPoint) -> Double? {
+        // 停止中は方向不定 (CLLocation の course も意味のある値を返さないため)。
+        guard let speed = point.speed, speed >= movingSpeedThreshold else { return nil }
+        guard let course = point.course, course >= 0 else { return nil }
+        return course
     }
 
     private func enterHistoryMode() {
