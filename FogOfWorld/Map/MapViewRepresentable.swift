@@ -9,6 +9,8 @@ struct MapViewRepresentable: UIViewRepresentable {
     var historyDayPoints: [RecordedPoint]?
     var historyMarkerCoordinate: CLLocationCoordinate2D?
     var historyMarkerTimeString: String?
+    // 履歴モード時のみマップタップで最近傍点のインデックスを通知する。通常モードでは nil 化される。
+    var onHistoryMapTap: ((Int) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(explorationManager: explorationManager)
@@ -27,6 +29,13 @@ struct MapViewRepresentable: UIViewRepresentable {
         mapView.showsScale = true
 
         mapView.register(HistoryAnnotationView.self, forAnnotationViewWithReuseIdentifier: HistoryAnnotationView.reuseIdentifier)
+
+        // 履歴モード時にマップタップで最近傍ポイントへスライダを飛ばすためのジェスチャ。
+        // 通常モード時は coordinator.historyDayPoints が nil で無視されるので常設してよい。
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleHistoryMapTap(_:)))
+        tap.cancelsTouchesInView = false
+        mapView.addGestureRecognizer(tap)
+        context.coordinator.historyTapGesture = tap
 
         let trackOverlay = TrackOverlay()
         mapView.addOverlay(trackOverlay, level: .aboveRoads)
@@ -82,6 +91,11 @@ struct MapViewRepresentable: UIViewRepresentable {
             coord.trackRenderer?.showPoints = shouldShowPoints
             coord.trackRenderer?.setNeedsDisplay()
         }
+        // タップで最近傍点ジャンプするためのコールバックと検索対象を coordinator に流す。
+        // 通常モードでは nil を渡してハンドラ内でスキップさせる。
+        coord.historyDayPoints = historyDayPoints
+        coord.onHistoryMapTap = (historyDayPoints != nil) ? onHistoryMapTap : nil
+        coord.historyTapGesture?.isEnabled = (historyDayPoints != nil)
 
         applyHistoryState(mapView: uiView, coordinator: coord)
     }
@@ -164,6 +178,11 @@ struct MapViewRepresentable: UIViewRepresentable {
         var historyAnnotation: HistoryAnnotation?
         var lastHistoryPointsKey: HistoryPointsKey?
         var lastShowPoints = false
+        // タップ→最近傍点インデックスを返すためのハンドラと、検索対象になる現在の dayPoints。
+        // updateUIView で MapViewRepresentable から同期される。
+        var historyDayPoints: [RecordedPoint]?
+        var onHistoryMapTap: ((Int) -> Void)?
+        var historyTapGesture: UITapGestureRecognizer?
 
         init(explorationManager: ExplorationManager) {
             self.explorationManager = explorationManager
@@ -195,6 +214,37 @@ struct MapViewRepresentable: UIViewRepresentable {
                     }
                     self.lastPointCount = points.count
                 }
+        }
+
+        @objc func handleHistoryMapTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended else { return }
+            guard isHistoryMode, let dayPoints = historyDayPoints, !dayPoints.isEmpty else { return }
+            guard let onTap = onHistoryMapTap else { return }
+            guard let mapView = gesture.view as? MKMapView else { return }
+
+            let touchPoint = gesture.location(in: mapView)
+            // 履歴マーカー(円ビュー)を直接タップした場合はスライダージャンプを起こさない。
+            // MKAnnotationView のヒットを除外することで、マーカー選択 UX を温存する。
+            if let hit = mapView.hitTest(touchPoint, with: nil), hit is MKAnnotationView || hit.superview is MKAnnotationView {
+                return
+            }
+
+            let tapCoord = mapView.convert(touchPoint, toCoordinateFrom: mapView)
+            // 1日分(数千点想定)なら線形探索で十分。経緯度差の二乗和で最近傍を取る。
+            // 高緯度での経度1度の縮尺差を補正するため dLon に cos(lat) をかける (距離計算より高速かつバイアス除去)。
+            let cosLat = cos(tapCoord.latitude * .pi / 180)
+            var bestIdx = 0
+            var bestDist = Double.greatestFiniteMagnitude
+            for (i, p) in dayPoints.enumerated() {
+                let dLat = p.latitude - tapCoord.latitude
+                let dLon = (p.longitude - tapCoord.longitude) * cosLat
+                let d = dLat * dLat + dLon * dLon
+                if d < bestDist {
+                    bestDist = d
+                    bestIdx = i
+                }
+            }
+            onTap(bestIdx)
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {

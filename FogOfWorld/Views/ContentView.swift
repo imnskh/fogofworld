@@ -15,7 +15,15 @@ struct ContentView: View {
                 showTrack: showTrack,
                 historyDayPoints: historyMode?.dayPoints,
                 historyMarkerCoordinate: historyMarkerPoint?.coordinate,
-                historyMarkerTimeString: historyMarkerPoint.map { Self.formatTime($0.timestamp) }
+                historyMarkerTimeString: historyMarkerPoint.map { Self.formatTime($0.timestamp) },
+                onHistoryMapTap: { idx in
+                    // タップされた最近傍ポイントのインデックスを sliderValue に反映する。
+                    // historyMode が nil の場合は無視 (ジェスチャ側でも無効化されている)。
+                    guard var updated = self.historyMode else { return }
+                    let clamped = max(0, min(updated.dayPoints.count - 1, idx))
+                    updated.sliderValue = Double(clamped)
+                    self.historyMode = updated
+                }
             )
             .ignoresSafeArea()
 
