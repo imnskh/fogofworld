@@ -75,6 +75,13 @@ struct MapViewRepresentable: UIViewRepresentable {
             coord.trackRenderer?.displayTimeInterval = effectiveInterval
             coord.trackRenderer?.setNeedsDisplay()
         }
+        // 履歴モード中のみ軌跡上に測位点ドットを描画する。通常モードでは点数が多すぎて視認性を損なう。
+        let shouldShowPoints = (historyDayPoints != nil)
+        if shouldShowPoints != coord.lastShowPoints {
+            coord.lastShowPoints = shouldShowPoints
+            coord.trackRenderer?.showPoints = shouldShowPoints
+            coord.trackRenderer?.setNeedsDisplay()
+        }
 
         applyHistoryState(mapView: uiView, coordinator: coord)
     }
@@ -156,6 +163,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         var isHistoryMode = false
         var historyAnnotation: HistoryAnnotation?
         var lastHistoryPointsKey: HistoryPointsKey?
+        var lastShowPoints = false
 
         init(explorationManager: ExplorationManager) {
             self.explorationManager = explorationManager
